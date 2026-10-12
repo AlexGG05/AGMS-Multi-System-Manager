@@ -4,6 +4,7 @@ from urllib.parse import urlparse
 import bcrypt
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse
+from .mailer import send_email
 
 EMAIL = re.compile(r"^[^\s@]{1,64}@[^\s@]{1,190}\.[^\s@]{2,}$")
 ROLES = {"owner", "editor", "viewer"}
@@ -37,15 +38,23 @@ def install(db):
       email TEXT NOT NULL, role TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE,
       expires_at INTEGER NOT NULL, created_by TEXT NOT NULL, accepted_at INTEGER
     );
+    CREATE TABLE IF NOT EXISTS account_security(username TEXT PRIMARY KEY, verified_at INTEGER, tier INTEGER NOT NULL DEFAULT 0);
+    CREATE TABLE IF NOT EXISTS account_tokens(token_hash TEXT PRIMARY KEY, username TEXT NOT NULL, purpose TEXT NOT NULL, expires_at INTEGER NOT NULL, used_at INTEGER);
     CREATE INDEX IF NOT EXISTS idx_members_username ON workspace_members(username);
     CREATE INDEX IF NOT EXISTS idx_nav_workspace ON workspace_navigation(workspace_id,position);
     """)
+    db.execute("INSERT OR IGNORE INTO account_security(username,verified_at,tier) SELECT username,unixepoch(),0 FROM users WHERE username=?", (os.getenv("ADMIN_USERNAME","admin"),))
     db.execute("INSERT OR IGNORE INTO account_profiles(username,email,role) SELECT username, CASE WHEN instr(username,'@')>0 THEN lower(username) ELSE NULL END, 'admin' FROM users WHERE username=?", (os.getenv("ADMIN_USERNAME","admin"),))
 
 def router(connect, require, csrf, serializer, secure, origin):
     api = APIRouter()
     def identity(request):
-        return require(request)
+        username=require(request)
+        if username!=os.getenv("ADMIN_USERNAME","admin"):
+            with connect() as db:
+                row=db.execute("SELECT verified_at FROM account_security WHERE username=?",(username,)).fetchone()
+            if not row or not row["verified_at"]: raise HTTPException(403,"Email verification required")
+        return username
     def membership(db, wsid, username, edit=False, owner=False):
         row=db.execute("SELECT role FROM workspace_members WHERE workspace_id=? AND username=?", (wsid,username)).fetchone()
         if not row: raise HTTPException(404,"Workspace not found")
@@ -81,13 +90,12 @@ def router(connect, require, csrf, serializer, secure, origin):
             try:
                 db.execute("INSERT INTO users(username,password_hash) VALUES(?,?)",(email,hashed))
                 db.execute("INSERT INTO account_profiles(username,email,role) VALUES(?,?,'user')",(email,email))
-                ensure_default(db,email)
+                db.execute("INSERT INTO account_security(username) VALUES(?)",(email,))
+                token=secrets.token_urlsafe(32)
+                db.execute("INSERT INTO account_tokens VALUES(?,?,?,?,NULL)",(hashlib.sha256(token.encode()).hexdigest(),email,"verify",int(time.time())+86400))
             except sqlite3.IntegrityError: raise HTTPException(409,"Account already exists")
-        # Public registration is not email verified yet. Do not grant global admin access.
-        response=JSONResponse({"ok":True})
-        response.set_cookie("session",serializer.dumps({"u":email}),httponly=True,secure=secure,samesite="lax",max_age=28800,path="/")
-        response.set_cookie("csrf",secrets.token_urlsafe(32),httponly=False,secure=secure,samesite="lax",max_age=28800,path="/")
-        return response
+        send_email(email,"CodeX Homelab: E-Mail bestätigen","Bestätige deine E-Mail-Adresse: "+origin+"/static/verify.html?token="+token+" (24 Stunden gültig)")
+        return {"ok":True,"message":"Verification email sent"}
     @api.get("/api/workspaces")
     def list_workspaces(request:Request):
         username=identity(request)
@@ -103,6 +111,11 @@ def router(connect, require, csrf, serializer, secure, origin):
         if not 1<=len(name)<=80: raise HTTPException(400,"Name must be 1–80 characters")
         wid=secrets.token_hex(12)
         with connect() as db:
+            if username!=os.getenv("ADMIN_USERNAME","admin"):
+                row=db.execute("SELECT tier FROM account_security WHERE username=?",(username,)).fetchone()
+                tier=row["tier"] if row else 0
+                limit={0:1,1:3,2:5,3:10}[tier]
+                if db.execute("SELECT COUNT(*) FROM workspaces WHERE owner=?",(username,)).fetchone()[0]>=limit: raise HTTPException(403,"Homepage limit reached")
             db.execute("INSERT INTO workspaces(id,name,owner) VALUES(?,?,?)",(wid,name,username))
             db.execute("INSERT INTO workspace_members(workspace_id,username,role) VALUES(?,?,'owner')",(wid,username))
         return {"id":wid,"name":name,"role":"owner"}
@@ -153,8 +166,8 @@ def router(connect, require, csrf, serializer, secure, origin):
         with connect() as db:
             membership(db,wsid,username,owner=True)
             db.execute("INSERT INTO workspace_invitations(id,workspace_id,email,role,token_hash,expires_at,created_by) VALUES(?,?,?,?,?,?,?)",(ident,wsid,email,role,hashlib.sha256(token.encode()).hexdigest(),expiry,username))
-        # Explicitly return a shareable link; SMTP delivery is a later feature.
-        return {"id":ident,"invite_url":origin+"/static/invite.html?token="+token,"expires_at":expiry,"delivery":"manual"}
+        send_email(email,"CodeX Homelab: Team-Einladung","Einladung annehmen: "+origin+"/static/invite.html?token="+token)
+        return {"id":ident,"expires_at":expiry,"delivery":"smtp"}
     @api.post("/api/invitations/accept")
     async def accept(request:Request):
         username=identity(request);csrf(request)
