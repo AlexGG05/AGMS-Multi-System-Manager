@@ -110,7 +110,7 @@ $('reload').onclick=()=>{const f=$('webFrame');f.src=f.src};
 // Fullscreen button uses a self-contained inline handler for mobile Safari reliability.
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&$('framePanel').classList.contains('web-frame-expanded'))setFrameExpanded(false)});
 $('addGroup').onclick=()=>{selectedGroup=null;addItem(true)};$('addWebui').onclick=()=>addItem(false);
-$('editButton').onclick=edit;$('editorAddGroup').onclick=()=>{selectedGroup=null;addItem(true)};$('editorAddLink').onclick=()=>addItem(false);
+$('editButton').onclick=edit;
 $('saveNavigation').onclick=save;$('cancelEdit').onclick=()=>openWorkspace(workspace.id);
 $('addWorkspace').onclick=async()=>{const name=prompt('Name der neuen Homepage');if(!name?.trim())return;try{const data=await api('/api/workspaces','POST',{name:name.trim()});await init();await openWorkspace(data.id)}catch(e){notify(e.message)}};
 $('deleteWorkspace').onclick=async()=>{if(!workspace||role!=='owner')return;if(!confirm('Homepage „'+workspace.name+'“ mit allen Gruppen, Widgets und Teamzuordnungen endgültig löschen?'))return;try{await api('/api/workspaces/'+workspace.id,'DELETE');localStorage.removeItem('codex-active-homepage');workspace=null;await init();notify('Homepage gelöscht')}catch(e){notify(e.message)}};
