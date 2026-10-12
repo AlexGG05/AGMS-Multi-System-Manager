@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 from .inventory import GROUPS
 from .arcane import get_arcane, manage_container
+from . import integrations
 
 DB = "/data/homelab.sqlite3"
 SECRET = os.environ.get("SESSION_SECRET", "")
@@ -240,3 +241,26 @@ async def proxmox_guest_details(request:Request,node:str,kind:str,vmid:int):
             return {"node":node,"kind":kind,"vmid":vmid,"status":current,"config":configuration}
     except (httpx.HTTPError,ValueError):
         raise HTTPException(502,"Unable to read Proxmox guest")
+
+@app.get("/api/integrations")
+def integrations_list(request:Request):
+    require(request)
+    with connect() as db:
+        return {"profiles":integrations.list_profiles(db)}
+
+@app.put("/api/integrations")
+async def integrations_save(request:Request):
+    require(request);csrf(request)
+    payload=await request.json()
+    if not isinstance(payload,dict): raise HTTPException(400,"Invalid payload")
+    with connect() as db:
+        ident=integrations.save(db,payload)
+    return {"id":ident,"ok":True}
+
+@app.delete("/api/integrations/{ident}")
+def integrations_delete(ident:int,request:Request):
+    require(request);csrf(request)
+    with connect() as db:
+        integrations.init(db)
+        db.execute("DELETE FROM integrations WHERE id=?",(ident,))
+    return {"ok":True}
