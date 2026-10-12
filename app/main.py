@@ -61,7 +61,7 @@ def csrf(request):
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request):
     username = user(request)
-    page = "workspaces.html" if username and username != ADMIN else ("control-center.html" if username else "index.html")
+    page = "workspaces.html" if username else "index.html"
     return FileResponse(Path(__file__).parent/"static"/page)
 
 @app.get("/api/me")
