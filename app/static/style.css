@@ -17,3 +17,30 @@
 .layout-tools button{padding:5px 8px;font-size:12px}
 .layout-tabdrag{border:0;background:#42536b;color:white;border-radius:7px;padding:10px;cursor:grab}
 @media(max-width:650px){.layout-grid{grid-auto-rows:56px;gap:4px}.layout-card{padding:6px;font-size:11px}.layout-tools button{padding:4px;font-size:10px}}
+
+/* CodeX dashboard visual refresh */
+:root{--bg:#090e18;--panel:#151e2c;--panel2:#1c293a;--line:#29374a;--muted:#98a9bf;--accent:#65a6ff;background:var(--bg);color:#eaf1fc}
+body{background:radial-gradient(circle at 85% -20%,#152844 0%,transparent 38%),var(--bg)}
+aside{background:#0e1623;border-right:1px solid #243247;padding:30px 18px}
+.brand{font-size:24px;color:#8ebfff;margin-bottom:42px}
+.nav{font-size:14px;font-weight:560;display:block;text-decoration:none;padding:13px 15px;border-radius:11px}
+.nav.active{background:#1c3452;box-shadow:inset 3px 0 #6caeff}
+main{max-width:1750px;padding:36px 48px}
+header{padding-bottom:20px;border-bottom:1px solid #223046;margin-bottom:30px}
+header h1{font-size:30px;letter-spacing:-.8px}
+.dash-heading{margin-bottom:14px}
+.dash-heading h2{font-size:23px;letter-spacing:-.5px}
+.dash-tabs{display:flex;justify-content:flex-start;background:#111b29;border:1px solid #283a51;border-radius:13px;padding:6px;gap:5px;margin-bottom:22px}
+.dash-tab{flex:0 1 150px;font-weight:600}
+.dash-tab.selected{background:#314864;box-shadow:0 3px 12px #0004}
+.layout-grid{background:transparent;border:0;padding:0;gap:14px;grid-auto-rows:82px;min-height:0;overflow:visible;margin-bottom:26px}
+.layout-card{background:linear-gradient(150deg,#1b293b,#152132);border:1px solid #30445f;border-radius:16px;padding:20px;box-shadow:0 8px 24px #0003;transition:border-color .2s,transform .2s}
+.layout-card:hover{border-color:#5685b6;transform:translateY(-2px)}
+.layout-card strong{font-size:16px;letter-spacing:-.2px}
+.layout-card p{font-size:13px;color:#9fb1c9}
+.layout-card a{font-weight:650;color:#8ac1ff;text-decoration:none}
+.tile,.panel{background:#151f2e;border:1px solid #2b3b50;border-radius:16px;box-shadow:0 8px 22px #0002}
+.metric{font-size:36px;letter-spacing:-1px;color:#f2f7ff}
+.section{font-size:18px;letter-spacing:-.4px}
+button{transition:filter .15s}button:hover{filter:brightness(1.12)}
+@media(max-width:760px){aside{width:100%;height:auto;position:static}main{padding:22px 15px}.layout-grid{gap:6px;grid-auto-rows:70px}.layout-card{padding:8px}.layout-card strong{font-size:12px}.layout-card p{font-size:10px}}
