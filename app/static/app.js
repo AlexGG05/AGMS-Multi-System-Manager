@@ -13,7 +13,7 @@ function render(){
  const shortcut=(name,icon)=>{const url=inventory.links[name];return '<article class="tile shortcut"><div class="shortcut-icon">'+icon+'</div><h3>'+esc(name)+'</h3><p>'+ (url?'Configured service':'Set its URL in Settings') +'</p>'+(url?'<a class="launch" target="_blank" rel="noopener noreferrer" href="'+esc(url)+'">Open application ↗</a>':'<button class="open-settings" type="button">Configure URL →</button>')+'</article>'};
  const apps=gs.flatMap(g=>g.items).filter((n,i,a)=>a.indexOf(n)===i);
  const launchpad='<div class="grid">'+apps.map(n=>shortcut(n,'◈')).join('')+'</div>';
- const environments=(arcane?.environments||[]).map(e=>'<article class="tile"><h3>'+esc(e.name)+'</h3><p>Status: '+esc(e.status)+'</p><div class="services"><span class="service">Total: '+esc(e.total??'—')+'</span><span class="service">Running: '+esc(e.running??'—')+'</span><span class="service">Stopped: '+esc(e.stopped??'—')+'</span><span class="service">Updates: '+esc(e.updates??'—')+'</span></div><div class="container-list">'+(e.containers||[]).map(x=>'<div class="container-row"><strong>'+esc(x.name)+'</strong><small>'+esc(x.state)+' · '+esc(x.image)+'</small>'+(x.hasUpdate?'<span class="tag">Update available</span>':'')+'</div>').join('')+'</div></article>').join('');
+ const environments=(arcane?.environments||[]).map(e=>'<article class="tile"><h3>'+esc(e.name)+'</h3><p>Status: '+esc(e.status)+'</p><div class="services"><span class="service">Total: '+esc(e.total??'—')+'</span><span class="service">Running: '+esc(e.running??'—')+'</span><span class="service">Stopped: '+esc(e.stopped??'—')+'</span><span class="service">Updates: '+esc(e.updates??'—')+'</span></div><div class="container-list">'+(e.containers||[]).map(x=>'<div class="container-row"><strong>'+esc(x.name)+'</strong><small>'+esc(x.state)+' · '+esc(x.image)+'</small>'+(x.hasUpdate?'<span class="tag">Update available</span>':'')+'<div class="services">'+['start','stop','restart','update'].filter(a=>a!=='update'||x.hasUpdate).map(a=>'<button class="container-action outline" data-env="'+esc(e.id)+'" data-id="'+esc(x.id)+'" data-name="'+esc(x.name)+'" data-action="'+a+'">'+a+'</button>').join('')+'</div></div>').join('')+'</div></article>').join('');
  const overviewHead='<div class="hero"><span class="eyebrow">YOUR INFRASTRUCTURE AT A GLANCE</span><h2>Welcome to CodeX Homelab</h2><p>Monitor your systems, explore Docker environments and launch your applications from one place.</p><div class="hero-actions"><button class="jump" data-target="docker">Explore Docker →</button><button class="jump secondary" data-target="apps">Open applications ↗</button></div></div>';
 
  const arcaneInfo=arcane?.configured ? `<div class="panel"><h3>Arcane Live</h3><p>${arcane.error?esc(arcane.error):`${arcane.environments.length} erkannte Umgebungen`}</p><div class="services">${arcane.environments.map(e=>`<span class="service">${esc(e.name)} — ${esc(e.status)}</span>`).join("")}</div><small class="muted">Read-only. Containeraktionen erst nach bestätigter API-Kompatibilität.</small></div>` : `<div class="panel">Arcane nicht konfiguriert. ARCANE_URL und ARCANE_API_KEY setzen.</div>`;
@@ -31,6 +31,15 @@ function render(){
    html=`<p class="muted">Set each service's web URL. Only trusted URLs should be added; they open in a separate tab.</p><div class="panel">${gs.flatMap(g=>g.items).map((name,i)=>`<div class="setting"><strong>${esc(name)}</strong><input class="urlinput" data-name="${esc(name)}" aria-label="URL for ${esc(name)}" placeholder="https://service.example.com" value="${esc(inventory.links[name]||"")}"><button class="save" data-index="${i}">Save</button></div>`).join("")}</div><p id="saveMessage" role="status"></p>`;
  }
  $("content").innerHTML=html;
+ document.querySelectorAll(".container-action").forEach(b=>b.onclick=async()=>{
+   if(!confirm(b.dataset.action.toUpperCase()+" container "+b.dataset.name+"?"))return;
+   b.disabled=true;
+   try{
+     await api("/api/arcane/environments/"+encodeURIComponent(b.dataset.env)+"/containers/"+encodeURIComponent(b.dataset.id)+"/"+b.dataset.action,{method:"POST"});
+     arcane=await api("/api/arcane");
+     render();
+   }catch(e){alert(e.message);b.disabled=false}
+ });
  document.querySelectorAll(".jump").forEach(b=>b.onclick=()=>{view=b.dataset.target;render()});
  document.querySelectorAll(".open-settings").forEach(b=>b.onclick=()=>{view="settings";render()});
  if(view==="settings")document.querySelectorAll(".save").forEach(b=>b.onclick=async()=>{let input=document.querySelectorAll(".urlinput")[Number(b.dataset.index)];try{await api("/api/links",{method:"PUT",body:JSON.stringify({name:input.dataset.name,url:input.value})});inventory.links[input.dataset.name]=input.value;$("saveMessage").textContent="Saved "+input.dataset.name}catch(e){$("saveMessage").textContent=e.message}});
