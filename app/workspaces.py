@@ -38,7 +38,7 @@ def install(db):
       email TEXT NOT NULL, role TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE,
       expires_at INTEGER NOT NULL, created_by TEXT NOT NULL, accepted_at INTEGER
     );
-    CREATE TABLE IF NOT EXISTS account_security(username TEXT PRIMARY KEY, verified_at INTEGER, tier INTEGER NOT NULL DEFAULT 0);
+    CREATE TABLE IF NOT EXISTS workspace_notifications(id TEXT PRIMARY KEY,username TEXT NOT NULL,workspace_id TEXT, message TEXT NOT NULL,created_at INTEGER NOT NULL DEFAULT (unixepoch()),read_at INTEGER);\n    CREATE INDEX IF NOT EXISTS idx_notifications_user ON workspace_notifications(username,read_at,created_at);\n    CREATE TABLE IF NOT EXISTS account_security(username TEXT PRIMARY KEY, verified_at INTEGER, tier INTEGER NOT NULL DEFAULT 0);
     CREATE TABLE IF NOT EXISTS account_tokens(token_hash TEXT PRIMARY KEY, username TEXT NOT NULL, purpose TEXT NOT NULL, expires_at INTEGER NOT NULL, used_at INTEGER);
     CREATE INDEX IF NOT EXISTS idx_members_username ON workspace_members(username);
     CREATE INDEX IF NOT EXISTS idx_nav_workspace ON workspace_navigation(workspace_id,position);
@@ -119,6 +119,27 @@ def router(connect, require, csrf, serializer, secure, origin):
             db.execute("INSERT INTO workspaces(id,name,owner) VALUES(?,?,?)",(wid,name,username))
             db.execute("INSERT INTO workspace_members(workspace_id,username,role) VALUES(?,?,'owner')",(wid,username))
         return {"id":wid,"name":name,"role":"owner"}
+    @api.patch("/api/workspaces/{wsid}")
+    async def rename_workspace(request:Request,wsid:str):
+        username=identity(request);csrf(request)
+        body=await request.json();name=str(body.get("name","")).strip()
+        if not 1<=len(name)<=80: raise HTTPException(400,"Name must be 1-80 characters")
+        with connect() as db:
+            membership(db,wsid,username,owner=True)
+            db.execute("UPDATE workspaces SET name=? WHERE id=?",(name,wsid))
+        return {"ok":True,"name":name}
+    @api.get("/api/notifications")
+    def notifications(request:Request):
+        username=identity(request)
+        with connect() as db:
+            rows=db.execute("SELECT id,workspace_id,message,created_at FROM workspace_notifications WHERE username=? AND read_at IS NULL ORDER BY created_at DESC LIMIT 30",(username,)).fetchall()
+        return {"notifications":[dict(x) for x in rows]}
+    @api.post("/api/notifications/{nid}/read")
+    def notification_read(request:Request,nid:str):
+        username=identity(request);csrf(request)
+        with connect() as db:
+            db.execute("UPDATE workspace_notifications SET read_at=unixepoch() WHERE id=? AND username=?",(nid,username))
+        return {"ok":True}
     @api.delete("/api/workspaces/{wsid}")
     def delete_workspace(request:Request,wsid:str):
         username=identity(request);csrf(request)
@@ -183,9 +204,19 @@ def router(connect, require, csrf, serializer, secure, origin):
         token=secrets.token_urlsafe(32);ident=secrets.token_hex(12);expiry=int(time.time())+7*86400
         with connect() as db:
             membership(db,wsid,username,owner=True)
+            existing=db.execute("SELECT p.username FROM account_profiles p JOIN account_security s ON s.username=p.username WHERE p.email=? AND s.verified_at IS NOT NULL",(email,)).fetchone()
+            if existing:
+                member=existing["username"]
+                if member==username: raise HTTPException(400,"Cannot invite yourself")
+                previous=db.execute("SELECT role FROM workspace_members WHERE workspace_id=? AND username=?",(wsid,member)).fetchone()
+                if previous: raise HTTPException(409,"User is already a member")
+                db.execute("INSERT INTO workspace_members(workspace_id,username,role) VALUES(?,?,?)",(wsid,member,role))
+                home=db.execute("SELECT name FROM workspaces WHERE id=?",(wsid,)).fetchone()
+                db.execute("INSERT INTO workspace_notifications(id,username,workspace_id,message) VALUES(?,?,?,?)",(secrets.token_hex(12),member,wsid,"Du wurdest zur Homepage „"+home["name"]+"“ hinzugefügt."))
+                return {"ok":True,"delivery":"in_app","added":True}
             db.execute("INSERT INTO workspace_invitations(id,workspace_id,email,role,token_hash,expires_at,created_by) VALUES(?,?,?,?,?,?,?)",(ident,wsid,email,role,hashlib.sha256(token.encode()).hexdigest(),expiry,username))
         send_email(email,"CodeX Homelab: Team-Einladung","Einladung annehmen: "+origin+"/static/invite.html?token="+token)
-        return {"id":ident,"expires_at":expiry,"delivery":"smtp"}
+        return {"id":ident,"expires_at":expiry,"delivery":"smtp","added":False}
     @api.post("/api/invitations/accept")
     async def accept(request:Request):
         username=identity(request);csrf(request)
@@ -246,6 +277,27 @@ def router(connect, require, csrf, serializer, secure, origin):
         with connect() as db:
             rows=db.execute("SELECT p.username,p.email,p.role,COALESCE(s.tier,0) tier,s.verified_at FROM account_profiles p LEFT JOIN account_security s ON s.username=p.username ORDER BY p.created_at DESC LIMIT 500").fetchall()
         return {"accounts":[dict(x) for x in rows]}
+    @api.delete("/api/admin/accounts/{username}")
+    def delete_account(request:Request,username:str):
+        admin=identity(request);csrf(request)
+        if admin!=os.getenv("ADMIN_USERNAME","admin"): raise HTTPException(403,"Admin only")
+        if username==admin: raise HTTPException(400,"Admin account cannot be deleted")
+        with connect() as db:
+            if not db.execute("SELECT 1 FROM users WHERE username=?",(username,)).fetchone(): raise HTTPException(404,"Account not found")
+            owned=[x[0] for x in db.execute("SELECT id FROM workspaces WHERE owner=?",(username,)).fetchall()]
+            for wsid in owned:
+                db.execute("DELETE FROM workspace_notifications WHERE workspace_id=?",(wsid,))
+                db.execute("DELETE FROM workspace_invitations WHERE workspace_id=?",(wsid,))
+                db.execute("DELETE FROM workspace_navigation WHERE workspace_id=?",(wsid,))
+                db.execute("DELETE FROM workspace_members WHERE workspace_id=?",(wsid,))
+                db.execute("DELETE FROM workspaces WHERE id=?",(wsid,))
+            db.execute("DELETE FROM workspace_members WHERE username=?",(username,))
+            db.execute("DELETE FROM workspace_notifications WHERE username=?",(username,))
+            db.execute("DELETE FROM account_tokens WHERE username=?",(username,))
+            db.execute("DELETE FROM account_security WHERE username=?",(username,))
+            db.execute("DELETE FROM account_profiles WHERE username=?",(username,))
+            db.execute("DELETE FROM users WHERE username=?",(username,))
+        return {"ok":True}
     @api.put("/api/admin/accounts/{username}/tier")
     async def tier(request:Request,username:str):
         if identity(request)!=os.getenv("ADMIN_USERNAME","admin"): raise HTTPException(403,"Admin only")
