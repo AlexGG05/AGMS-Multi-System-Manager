@@ -1,10 +1,27 @@
-let inventory=null, pve=null, arcane=null, view="overview";
+let inventory=null, pve=null, arcane=null, dashboard=null, activeTab="Main", view="overview";
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 function csrf(){return document.cookie.split("; ").find(x=>x.startsWith("csrf="))?.slice(5)||""}
 async function api(path,opts={}){let r=await fetch(path,{credentials:"same-origin",...opts,headers:{"Content-Type":"application/json","X-CSRF-Token":csrf(),...(opts.headers||{})}});let data=await r.json();if(!r.ok)throw Error(data.detail||data.error||"Request failed");return data}
 function link(name){let url=inventory.links[name];return url?`<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(name)} ↗</a>`:esc(name)}
 function cards(groups){return `<div class="grid">${groups.map(g=>`<article class="tile"><div class="row"><h3>${esc(g.name)}</h3><span class="tag">${esc(g.type)}</span></div><p>${g.items.length} configured services · live status not connected</p><div class="services">${g.items.map(i=>`<span class="service">${link(i)}</span>`).join("")}</div></article>`).join("")}</div>`}
+function customDashboard(){
+ if(!dashboard)return "";
+ const tabs='<div class="dash-tabs">'+dashboard.tabs.map(t=>'<button class="dash-tab '+(t===activeTab?'selected':'')+'" data-tab="'+esc(t)+'">'+esc(t)+'</button>').join('')+'</div>';
+ const tiles=dashboard.tiles.filter(t=>t.tab===activeTab);
+ return '<div class="dash-heading"><h2>'+esc(activeTab)+'</h2><button class="outline" id="editDashboard">Edit dashboard</button></div>'+tabs+
+ '<div class="grid">'+tiles.map(t=>'<article class="tile shortcut"><h3>'+esc(t.name)+'</h3><p>'+esc(t.subtitle)+'</p>'+(t.url?'<a class="launch" href="'+esc(t.url)+'" target="_blank" rel="noopener noreferrer">Open ↗</a>':'')+'</article>').join('')+'</div>';
+}
+function dashboardEditor(){
+ const root=$("content");
+ const tabs=dashboard.tabs;
+ root.innerHTML='<div class="panel"><h2>Dashboard editor</h2><p class="muted">Create categories and cards directly in the browser. Saved per user.</p><div class="setting"><input id="newTab" placeholder="New category"><button id="addTab">Add category</button></div><div class="setting"><input id="tileName" placeholder="Card name"><input id="tileUrl" placeholder="https://... (optional)"><input id="tileSubtitle" placeholder="Description"><select id="tileTab">'+tabs.map(t=>'<option>'+esc(t)+'</option>').join('')+'</select><button id="addTile">Add card</button></div><div id="editorItems">'+dashboard.tiles.map((t,i)=>'<div class="setting"><span>'+esc(t.tab)+' / '+esc(t.name)+'</span><button class="removeTile" data-i="'+i+'">Remove</button></div>').join('')+'</div><div class="services"><button id="saveDashboard">Save changes</button><button id="cancelDashboard" class="outline">Cancel</button></div><p id="editStatus" role="status"></p></div>';
+ $("addTab").onclick=()=>{let t=$("newTab").value.trim();if(!t||tabs.includes(t)||t.length>40)return;tabs.push(t);dashboardEditor()};
+ $("addTile").onclick=()=>{let name=$("tileName").value.trim(),url=$("tileUrl").value.trim(),subtitle=$("tileSubtitle").value.trim(),tab=$("tileTab").value;if(!name||name.length>80)return;dashboard.tiles.push({name,url,subtitle,tab});dashboardEditor()};
+ document.querySelectorAll(".removeTile").forEach(b=>b.onclick=()=>{dashboard.tiles.splice(Number(b.dataset.i),1);dashboardEditor()});
+ $("cancelDashboard").onclick=async()=>{dashboard=await api("/api/dashboard");render()};
+ $("saveDashboard").onclick=async()=>{try{dashboard=await api("/api/dashboard",{method:"PUT",body:JSON.stringify(dashboard)});render()}catch(e){$("editStatus").textContent=e.message}};
+}
 function render(){
  let title={overview:"Overview",docker:"Docker environments",infra:"Infrastructure",storage:"Storage / NAS",apps:"Applications",proxmox:"Proxmox cluster",settings:"Service URLs"}[view];
  $("pageTitle").textContent=title;document.querySelectorAll(".nav").forEach(b=>b.classList.toggle("active",b.dataset.view===view));
@@ -18,7 +35,7 @@ function render(){
 
  const arcaneInfo=arcane?.configured ? `<div class="panel"><h3>Arcane Live</h3><p>${arcane.error?esc(arcane.error):`${arcane.environments.length} erkannte Umgebungen`}</p><div class="services">${arcane.environments.map(e=>`<span class="service">${esc(e.name)} — ${esc(e.status)}</span>`).join("")}</div><small class="muted">Read-only. Containeraktionen erst nach bestätigter API-Kompatibilität.</small></div>` : `<div class="panel">Arcane nicht konfiguriert. ARCANE_URL und ARCANE_API_KEY setzen.</div>`;
  if(view==="overview"){
-   html=overviewHead+`<div class="grid stats"><div class="tile"><p>Docker LXC environments</p><div class="metric">${dock.length}</div><small class="muted">Inventory count</small></div><div class="tile"><p>Listed Docker services</p><div class="metric">${dock.reduce((n,g)=>n+g.items.length,0)}</div><small class="muted">Not live container counts</small></div><div class="tile"><p>Proxmox cluster nodes</p><div class="metric">${pve?.nodes?.length??"—"}</div><small class="muted">${pve?.configured?"API configured":"Connect API to view"}</small></div><div class="tile"><p>Proxmox guests</p><div class="metric">${pve?.guests?.length??"—"}</div><small class="muted">VMs + LXCs reported by API</small></div></div><h2 class="section">Arcane environments</h2><div class="grid">${environments||'<div class="panel">No live environments available yet.</div>'}</div><h2 class="section">Docker inventory</h2>${cards(dock)}<h2 class="section">Other systems</h2>${cards([...pi,...infra])}`;
+   html=customDashboard()+overviewHead+`<div class="grid stats"><div class="tile"><p>Docker LXC environments</p><div class="metric">${dock.length}</div><small class="muted">Inventory count</small></div><div class="tile"><p>Listed Docker services</p><div class="metric">${dock.reduce((n,g)=>n+g.items.length,0)}</div><small class="muted">Not live container counts</small></div><div class="tile"><p>Proxmox cluster nodes</p><div class="metric">${pve?.nodes?.length??"—"}</div><small class="muted">${pve?.configured?"API configured":"Connect API to view"}</small></div><div class="tile"><p>Proxmox guests</p><div class="metric">${pve?.guests?.length??"—"}</div><small class="muted">VMs + LXCs reported by API</small></div></div><h2 class="section">Arcane environments</h2><div class="grid">${environments||'<div class="panel">No live environments available yet.</div>'}</div><h2 class="section">Docker inventory</h2>${cards(dock)}<h2 class="section">Other systems</h2>${cards([...pi,...infra])}`;
  }else if(view==="docker")html=`<h2 class="section">Live Arcane environments</h2><div class="grid">${environments||'<div class="panel">No environments reported.</div>'}</div><h2 class="section">Inventory</h2>${cards(dock)}`;
  else if(view==="infra")html=cards([...infra,...pi]);
  else if(view==="storage")html=cards(gs.filter(g=>/nas|storage|truenas/i.test(g.name+" "+g.items.join(" "))))||'<div class="panel">No NAS configured.</div>';
@@ -31,6 +48,8 @@ function render(){
    html=`<p class="muted">Set each service's web URL. Only trusted URLs should be added; they open in a separate tab.</p><div class="panel">${gs.flatMap(g=>g.items).map((name,i)=>`<div class="setting"><strong>${esc(name)}</strong><input class="urlinput" data-name="${esc(name)}" aria-label="URL for ${esc(name)}" placeholder="https://service.example.com" value="${esc(inventory.links[name]||"")}"><button class="save" data-index="${i}">Save</button></div>`).join("")}</div><p id="saveMessage" role="status"></p>`;
  }
  $("content").innerHTML=html;
+ document.querySelectorAll(".dash-tab").forEach(b=>b.onclick=()=>{activeTab=b.dataset.tab;render()});
+ if($("editDashboard"))$("editDashboard").onclick=dashboardEditor;
  document.querySelectorAll(".container-action").forEach(b=>b.onclick=async()=>{
    if(!confirm(b.dataset.action.toUpperCase()+" container "+b.dataset.name+"?"))return;
    b.disabled=true;
@@ -44,7 +63,7 @@ function render(){
  document.querySelectorAll(".open-settings").forEach(b=>b.onclick=()=>{view="settings";render()});
  if(view==="settings")document.querySelectorAll(".save").forEach(b=>b.onclick=async()=>{let input=document.querySelectorAll(".urlinput")[Number(b.dataset.index)];try{await api("/api/links",{method:"PUT",body:JSON.stringify({name:input.dataset.name,url:input.value})});inventory.links[input.dataset.name]=input.value;$("saveMessage").textContent="Saved "+input.dataset.name}catch(e){$("saveMessage").textContent=e.message}});
 }
-async function start(){let me=await api("/api/me");$("login").hidden=!!me.username;$("shell").hidden=!me.username;if(me.username){$("who").textContent=me.username;inventory=await api("/api/inventory");try{arcane=await api("/api/arcane")}catch(e){arcane={configured:true,environments:[],error:e.message}}try{pve=await api("/api/proxmox")}catch(e){pve={configured:true,error:e.message}}render()}}
+async function start(){let me=await api("/api/me");$("login").hidden=!!me.username;$("shell").hidden=!me.username;if(me.username){$("who").textContent=me.username;inventory=await api("/api/inventory");dashboard=await api("/api/dashboard");try{arcane=await api("/api/arcane")}catch(e){arcane={configured:true,environments:[],error:e.message}}try{pve=await api("/api/proxmox")}catch(e){pve={configured:true,error:e.message}}render()}}
 $("loginForm").onsubmit=async e=>{e.preventDefault();$("loginError").textContent="";try{await api("/api/login",{method:"POST",body:JSON.stringify({username:$("username").value,password:$("password").value})});$("password").value="";await start()}catch(err){$("loginError").textContent=err.message}};
 document.querySelectorAll(".nav").forEach(b=>b.onclick=()=>{view=b.dataset.view;render()});
 $("logout").onclick=async()=>{await api("/api/logout",{method:"POST"});inventory=null;pve=null;arcane=null;await start()};
