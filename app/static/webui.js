@@ -9,7 +9,7 @@ function maxHomes(){return tier===3?10:tier===2?5:tier===1?3:1}
 async function init(){try{const data=await api('/api/workspaces');workspaces=data.workspaces;tier=data.tier;$('tierLabel').textContent=data.account_role==='admin'?'Administrator':tier?'Premium Tier '+tier:'Free · 1 Homepage';$('premiumLink').hidden=data.account_role!=='admin';$('workspaceSelect').replaceChildren(...workspaces.map(w=>{const option=document.createElement('option');option.value=w.id;option.textContent=w.name;return option}));if(!workspaces.length){notify('Erstelle deine erste Homepage.');panels('homePanel');return}const stored=localStorage.getItem('codex-active-homepage');await openWorkspace(workspaces.find(w=>w.id===stored)?.id||workspaces[0].id);await showNotifications()}catch(e){notify(e.message)}}
 async function openWorkspace(id){try{const d=await api('/api/workspaces/'+id);workspace=d.workspace;role=d.role;items=d.navigation;editing=false;selectedGroup=null;localStorage.setItem('codex-active-homepage',id);$('workspaceSelect').value=id;$('pageTitle').textContent=workspace.name;$('deleteWorkspace').disabled=role!=='owner';$('renameWorkspace').disabled=role!=='owner';$('editButton').hidden=role==='viewer';$('addGroup').hidden=role==='viewer';$('addWebui').hidden=role==='viewer';$('invite').hidden=role!=='owner';notify('');renderNav();showHome()}catch(e){notify(e.message)}}
 let frameOriginalParent=null,frameOriginalNext=null;
-function setFrameExpanded(expanded){
+function setFrameExpanded(expanded){if(typeof window.agmsSetFrameMode==='function'){window.agmsSetFrameMode(expanded);return;}
  const panel=$('framePanel'),button=$('expandFrame');
  if(expanded){
   if(panel.classList.contains('web-frame-expanded'))return;
@@ -43,7 +43,7 @@ $('closeNotifications').onclick=()=>{$('notificationMenu').hidden=true;$('notifi
 $('workspaceSelect').onchange=e=>openWorkspace(e.target.value);
 $('showHome').onclick=showHome;$('back').onclick=()=>selectedGroup?showGroup(selectedGroup):showHome();
 $('reload').onclick=()=>{const f=$('webFrame');f.src=f.src};
-$('expandFrame').onclick=()=>setFrameExpanded(!$('framePanel').classList.contains('web-frame-expanded'));
+// Fullscreen button uses a self-contained inline handler for mobile Safari reliability.
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&$('framePanel').classList.contains('web-frame-expanded'))setFrameExpanded(false)});
 $('addGroup').onclick=()=>addItem(true);$('addWebui').onclick=()=>addItem(false);
 $('editButton').onclick=edit;$('editorAddGroup').onclick=()=>addItem(true);$('editorAddLink').onclick=()=>addItem(false);
