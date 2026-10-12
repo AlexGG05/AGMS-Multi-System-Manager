@@ -38,7 +38,9 @@ def install(db):
       email TEXT NOT NULL, role TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE,
       expires_at INTEGER NOT NULL, created_by TEXT NOT NULL, accepted_at INTEGER
     );
-    CREATE TABLE IF NOT EXISTS workspace_notifications(id TEXT PRIMARY KEY,username TEXT NOT NULL,workspace_id TEXT, message TEXT NOT NULL,created_at INTEGER NOT NULL DEFAULT (unixepoch()),read_at INTEGER);\n    CREATE INDEX IF NOT EXISTS idx_notifications_user ON workspace_notifications(username,read_at,created_at);\n    CREATE TABLE IF NOT EXISTS account_security(username TEXT PRIMARY KEY, verified_at INTEGER, tier INTEGER NOT NULL DEFAULT 0);
+    CREATE TABLE IF NOT EXISTS workspace_notifications(id TEXT PRIMARY KEY,username TEXT NOT NULL,workspace_id TEXT, message TEXT NOT NULL,created_at INTEGER NOT NULL DEFAULT (unixepoch()),read_at INTEGER);
+    CREATE INDEX IF NOT EXISTS idx_notifications_user ON workspace_notifications(username,read_at,created_at);
+    CREATE TABLE IF NOT EXISTS account_security(username TEXT PRIMARY KEY, verified_at INTEGER, tier INTEGER NOT NULL DEFAULT 0);
     CREATE TABLE IF NOT EXISTS account_tokens(token_hash TEXT PRIMARY KEY, username TEXT NOT NULL, purpose TEXT NOT NULL, expires_at INTEGER NOT NULL, used_at INTEGER);
     CREATE INDEX IF NOT EXISTS idx_members_username ON workspace_members(username);
     CREATE INDEX IF NOT EXISTS idx_nav_workspace ON workspace_navigation(workspace_id,position);
