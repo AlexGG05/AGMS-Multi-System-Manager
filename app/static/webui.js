@@ -8,7 +8,23 @@ function panels(id){if(id!=='framePanel')setFrameExpanded(false);for(const key o
 function maxHomes(){return tier===3?10:tier===2?5:tier===1?3:1}
 async function init(){try{const data=await api('/api/workspaces');workspaces=data.workspaces;tier=data.tier;$('tierLabel').textContent=data.account_role==='admin'?'Administrator':tier?'Premium Tier '+tier:'Free · 1 Homepage';$('premiumLink').hidden=data.account_role!=='admin';$('workspaceSelect').replaceChildren(...workspaces.map(w=>{const option=document.createElement('option');option.value=w.id;option.textContent=w.name;return option}));if(!workspaces.length){notify('Erstelle deine erste Homepage.');panels('homePanel');return}const stored=localStorage.getItem('codex-active-homepage');await openWorkspace(workspaces.find(w=>w.id===stored)?.id||workspaces[0].id);await showNotifications()}catch(e){notify(e.message)}}
 async function openWorkspace(id){try{const d=await api('/api/workspaces/'+id);workspace=d.workspace;role=d.role;items=d.navigation;editing=false;selectedGroup=null;localStorage.setItem('codex-active-homepage',id);$('workspaceSelect').value=id;$('pageTitle').textContent=workspace.name;$('deleteWorkspace').disabled=role!=='owner';$('renameWorkspace').disabled=role!=='owner';$('editButton').hidden=role==='viewer';$('addGroup').hidden=role==='viewer';$('addWebui').hidden=role==='viewer';$('invite').hidden=role!=='owner';notify('');renderNav();showHome()}catch(e){notify(e.message)}}
-function setFrameExpanded(expanded){const panel=$('framePanel');panel.classList.toggle('web-frame-expanded',expanded);$('expandFrame').textContent=expanded?'⤢ Verkleinern':'⛶ Vollbild';$('expandFrame').setAttribute('aria-pressed',String(expanded));document.body.style.overflow=expanded?'hidden':''}
+let frameOriginalParent=null,frameOriginalNext=null;
+function setFrameExpanded(expanded){
+ const panel=$('framePanel'),button=$('expandFrame');
+ if(expanded){
+  if(panel.classList.contains('web-frame-expanded'))return;
+  frameOriginalParent=panel.parentNode;frameOriginalNext=panel.nextSibling;
+  document.body.appendChild(panel);
+  panel.classList.add('web-frame-expanded');
+  panel.style.cssText='position:fixed!important;inset:0!important;z-index:2147483647!important;display:flex!important;flex-direction:column!important;width:100vw!important;height:100dvh!important;max-height:100dvh!important;margin:0!important;padding:env(safe-area-inset-top) 8px env(safe-area-inset-bottom)!important;box-sizing:border-box!important;overflow:hidden!important;background:#0b1220!important';
+  document.body.style.overflow='hidden';
+ }else{
+  panel.classList.remove('web-frame-expanded');panel.style.removeProperty('position');panel.removeAttribute('style');
+  if(frameOriginalParent){frameOriginalParent.insertBefore(panel,frameOriginalNext&&frameOriginalNext.parentNode===frameOriginalParent?frameOriginalNext:null);frameOriginalParent=null;frameOriginalNext=null}
+  document.body.style.overflow='';
+ }
+ button.textContent=expanded?'⤢ Verkleinern':'⛶ Vollbild';button.setAttribute('aria-pressed',String(expanded));
+}
 function renderNav(){$('groupNav').replaceChildren();for(const group of items.filter(n=>!n.url)){const b=document.createElement('button');b.className='web-nav';b.textContent='▤  '+group.title;b.onclick=()=>showGroup(group.id);$('groupNav').append(b)}}
 function tile(item){const b=document.createElement('button');b.className='web-tile';const icon=document.createElement('span');icon.className='web-tile-icon';icon.textContent=item.icon||'◈';const name=document.createElement('strong');name.textContent=item.title;const sub=document.createElement('small');sub.textContent=item.url?'Weboberfläche':'Gruppe öffnen';b.append(icon,name,sub);b.onclick=()=>item.url?openFrame(item):showGroup(item.id);return b}
 function showHome(){selectedGroup=null;$('breadcrumb').textContent='ÜBERSICHT';$('pageTitle').textContent=workspace?.name||'Meine Homepage';$('tiles').replaceChildren(...items.filter(n=>!n.parent_id).map(tile));if(!$('tiles').children.length){const p=document.createElement('p');p.textContent='Noch keine Weboberflächen. Über „WebUI hinzufügen“ kannst du deinen ersten Dienst anlegen.';$('tiles').append(p)}panels('homePanel')}
