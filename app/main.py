@@ -284,6 +284,7 @@ async def legacy_admin_boundary(request:Request, call_next):
     if path.startswith("/api/") and not (
         path in ("/api/login","/api/logout","/api/me","/api/register","/api/account/verify","/api/account/forgot-password","/api/account/reset-password")
         or path.startswith("/api/workspaces")
+        or path.startswith("/api/notifications")
         or path.startswith("/api/admin/accounts")
         or path=="/api/invitations/accept"
     ):
