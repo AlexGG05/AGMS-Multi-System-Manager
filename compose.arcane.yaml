@@ -1,0 +1,33 @@
+# In Arcane select your Raspberry Pi environment and create a Compose project.
+# Replace YOUR_GITHUB_USERNAME and REPOSITORY with your lowercase GitHub names.
+services:
+  dashboard:
+    image: ghcr.io/YOUR_GITHUB_USERNAME/codex-agrosskopf-dashboard:latest
+    platform: linux/arm64
+    restart: unless-stopped
+    ports:
+      # Accessible from the LAN; restrict this port to your trusted reverse proxy with firewall rules.
+      - "8080:8080"
+    environment:
+      ADMIN_USERNAME: ${ADMIN_USERNAME:?Set ADMIN_USERNAME}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD}
+      SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET}
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:?Set PUBLIC_ORIGIN}
+      COOKIE_SECURE: "true"
+      PVE_URL: ${PVE_URL:-}
+      PVE_TOKEN_ID: ${PVE_TOKEN_ID:-}
+      PVE_TOKEN_SECRET: ${PVE_TOKEN_SECRET:-}
+      PVE_CA_BUNDLE: ${PVE_CA_BUNDLE:-}
+    volumes:
+      - dashboard_data:/data
+      # Optional for a private Proxmox CA (set PVE_CA_BUNDLE=/certs/ca.pem):
+      # - /opt/codex-homelab/certs:/certs:ro
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    mem_limit: 256m
+    cpus: 1.0
+volumes:
+  dashboard_data:
