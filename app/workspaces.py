@@ -183,7 +183,9 @@ def router(connect, require, csrf, serializer, secure, origin):
             ident=str(item.get("id") or secrets.token_hex(12))
             title=str(item.get("title","")).strip();icon=str(item.get("icon","globe")).strip()
             parent=item.get("parent_id");parent=str(parent) if parent else None
-            min_role=str(item.get("min_role","viewer"))\n            open_mode=str(item.get("open_mode","embed"))\n            if open_mode not in ("embed","external"): raise HTTPException(400,"Invalid open mode")
+            min_role=str(item.get("min_role","viewer"))
+            open_mode=str(item.get("open_mode","embed"))
+            if open_mode not in ("embed","external"): raise HTTPException(400,"Invalid open mode")
             if ident in ids or not 1<=len(title)<=80 or len(icon)>40 or min_role not in ROLES or (parent and parent==ident): raise HTTPException(400,"Invalid item")
             ids.add(ident);cleaned.append((ident,wsid,parent,title,icon,clean_url(item.get("url")),i,min_role,open_mode))
         for row in cleaned:
