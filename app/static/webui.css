@@ -17,3 +17,13 @@
 #notifications .web-member button{padding:7px 10px}
 #notifications .web-empty{color:#93a9c4;margin:6px 0}
 @media(max-width:720px){.web-notification-menu{right:-12px}.web-top-actions{justify-content:flex-start}}
+
+/* Hard containment: no sidebar child may expand the grid column. */
+.web-shell{grid-template-columns:minmax(0,258px) minmax(0,1fr)}
+.web-sidebar,.web-sidebar *{min-width:0}
+.web-sidebar{width:100%;overflow-x:hidden}
+.web-side-actions{display:grid!important;grid-template-columns:minmax(0,1fr) minmax(0,1fr)!important;gap:6px!important;width:100%;max-width:100%}
+.web-side-actions button{display:block;box-sizing:border-box;min-width:0!important;max-width:100%;width:100%;white-space:normal!important;overflow-wrap:anywhere;font-size:11px!important;padding:9px 3px!important;text-align:center}
+#addWorkspace{grid-column:1/-1}
+[hidden]{display:none!important}
+@media(max-width:720px){.web-shell{grid-template-columns:minmax(0,1fr)}}
