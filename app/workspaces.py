@@ -43,6 +43,9 @@ def install(db):
     CREATE INDEX IF NOT EXISTS idx_members_username ON workspace_members(username);
     CREATE INDEX IF NOT EXISTS idx_nav_workspace ON workspace_navigation(workspace_id,position);
     """)
+    columns={row[1] for row in db.execute("PRAGMA table_info(workspace_navigation)").fetchall()}
+    if "open_mode" not in columns:
+        db.execute("ALTER TABLE workspace_navigation ADD COLUMN open_mode TEXT NOT NULL DEFAULT 'embed'")
     db.execute("INSERT OR IGNORE INTO account_security(username,verified_at,tier) SELECT username,unixepoch(),0 FROM users WHERE username=?", (os.getenv("ADMIN_USERNAME","admin"),))
     db.execute("INSERT OR IGNORE INTO account_profiles(username,email,role) SELECT username, CASE WHEN instr(username,'@')>0 THEN lower(username) ELSE NULL END, 'admin' FROM users WHERE username=?", (os.getenv("ADMIN_USERNAME","admin"),))
 
@@ -164,7 +167,7 @@ def router(connect, require, csrf, serializer, secure, origin):
         with connect() as db:
             role=membership(db,wsid,username)
             w=db.execute("SELECT id,name FROM workspaces WHERE id=?",(wsid,)).fetchone()
-            nav=db.execute("SELECT id,parent_id,title,icon,url,position,min_role FROM workspace_navigation WHERE workspace_id=? ORDER BY position,id",(wsid,)).fetchall()
+            nav=db.execute("SELECT id,parent_id,title,icon,url,position,min_role,open_mode FROM workspace_navigation WHERE workspace_id=? ORDER BY position,id",(wsid,)).fetchall()
         order={"viewer":0,"editor":1,"owner":2}
         return {"workspace":dict(w),"role":role,"navigation":[dict(n) for n in nav if order[role]>=order[n["min_role"]]]}
     @api.put("/api/workspaces/{wsid}/navigation")
@@ -178,16 +181,16 @@ def router(connect, require, csrf, serializer, secure, origin):
             ident=str(item.get("id") or secrets.token_hex(12))
             title=str(item.get("title","")).strip();icon=str(item.get("icon","globe")).strip()
             parent=item.get("parent_id");parent=str(parent) if parent else None
-            min_role=str(item.get("min_role","viewer"))
+            min_role=str(item.get("min_role","viewer"))\n            open_mode=str(item.get("open_mode","embed"))\n            if open_mode not in ("embed","external"): raise HTTPException(400,"Invalid open mode")
             if ident in ids or not 1<=len(title)<=80 or len(icon)>40 or min_role not in ROLES or (parent and parent==ident): raise HTTPException(400,"Invalid item")
-            ids.add(ident);cleaned.append((ident,wsid,parent,title,icon,clean_url(item.get("url")),i,min_role))
+            ids.add(ident);cleaned.append((ident,wsid,parent,title,icon,clean_url(item.get("url")),i,min_role,open_mode))
         for row in cleaned:
             if row[2] and row[2] not in ids: raise HTTPException(400,"Unknown parent")
             if row[2] and next(x for x in cleaned if x[0]==row[2])[2]: raise HTTPException(400,"Nested groups are not supported")
         with connect() as db:
             membership(db,wsid,username,edit=True)
             db.execute("DELETE FROM workspace_navigation WHERE workspace_id=?",(wsid,))
-            db.executemany("INSERT INTO workspace_navigation(id,workspace_id,parent_id,title,icon,url,position,min_role) VALUES(?,?,?,?,?,?,?,?)",cleaned)
+            db.executemany("INSERT INTO workspace_navigation(id,workspace_id,parent_id,title,icon,url,position,min_role,open_mode) VALUES(?,?,?,?,?,?,?,?,?)",cleaned)
         return {"ok":True}
     @api.get("/api/workspaces/{wsid}/members")
     def members(request:Request,wsid:str):
