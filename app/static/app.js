@@ -12,16 +12,24 @@ function customDashboard(){
  return '<div class="dash-heading"><h2>'+esc(activeTab)+'</h2><button class="outline" id="editDashboard">Edit dashboard</button></div>'+tabs+
  '<div class="grid">'+tiles.map(t=>'<article class="tile shortcut"><h3>'+esc(t.name)+'</h3><p>'+esc(t.subtitle)+'</p>'+(t.url?'<a class="launch" href="'+esc(t.url)+'" target="_blank" rel="noopener noreferrer">Open ↗</a>':'')+'</article>').join('')+'</div>';
 }
-function dashboardEditor(){
- const root=$("content");
+function dashboardEditor(editIndex=-1){
  const tabs=dashboard.tabs;
- root.innerHTML='<div class="panel"><h2>Dashboard editor</h2><p class="muted">Create categories and cards directly in the browser. Saved per user.</p><div class="setting"><input id="newTab" placeholder="New category"><button id="addTab">Add category</button></div><div class="setting"><input id="tileName" placeholder="Card name"><input id="tileUrl" placeholder="https://... (optional)"><input id="tileSubtitle" placeholder="Description"><select id="tileTab">'+tabs.map(t=>'<option>'+esc(t)+'</option>').join('')+'</select><button id="addTile">Add card</button></div><div id="editorItems">'+dashboard.tiles.map((t,i)=>'<div class="setting"><span>'+esc(t.tab)+' / '+esc(t.name)+'</span><button class="removeTile" data-i="'+i+'">Remove</button></div>').join('')+'</div><div class="services"><button id="saveDashboard">Save changes</button><button id="cancelDashboard" class="outline">Cancel</button></div><p id="editStatus" role="status"></p></div>';
- $("addTab").onclick=()=>{let t=$("newTab").value.trim();if(!t||tabs.includes(t)||t.length>40)return;tabs.push(t);dashboardEditor()};
- $("addTile").onclick=()=>{let name=$("tileName").value.trim(),url=$("tileUrl").value.trim(),subtitle=$("tileSubtitle").value.trim(),tab=$("tileTab").value;if(!name||name.length>80)return;dashboard.tiles.push({name,url,subtitle,tab});dashboardEditor()};
+ const selected=editIndex>=0?dashboard.tiles[editIndex]:{name:"",url:"",subtitle:"",tab:activeTab};
+ $("content").innerHTML='<div class="panel"><h2>Dashboard editor</h2><p class="muted">Drag cards to reorder. Changes are saved only after clicking Save.</p><div class="setting"><input id="newTab" placeholder="New category"><button id="addTab">Add category</button></div><div class="setting"><input id="tileName" placeholder="Card name" value="'+esc(selected.name)+'"><input id="tileUrl" placeholder="https://..." value="'+esc(selected.url)+'"><input id="tileSubtitle" placeholder="Description" value="'+esc(selected.subtitle)+'"><select id="tileTab">'+tabs.map(t=>'<option value="'+esc(t)+'" '+(t===selected.tab?'selected':'')+'>'+esc(t)+'</option>').join('')+'</select><button id="addTile">'+(editIndex>=0?'Update card':'Add card')+'</button></div><div id="editorItems">'+dashboard.tiles.map((t,i)=>'<div class="setting draggable" draggable="true" data-i="'+i+'"><span>☰ '+esc(t.tab)+' / '+esc(t.name)+'</span><button class="editTile" data-i="'+i+'">Edit</button><button class="removeTile" data-i="'+i+'">Remove</button></div>').join('')+'</div><div class="services"><button id="saveDashboard">Save changes</button><button id="cancelDashboard" class="outline">Cancel</button></div><p id="editStatus" role="status"></p></div>';
+ $("addTab").onclick=()=>{const t=$("newTab").value.trim();if(!t||tabs.includes(t)||t.length>40)return;tabs.push(t);dashboardEditor()};
+ $("addTile").onclick=()=>{const name=$("tileName").value.trim(),url=$("tileUrl").value.trim(),subtitle=$("tileSubtitle").value.trim(),tab=$("tileTab").value;if(!name||name.length>80||subtitle.length>160)return;try{if(url&&!(new URL(url).protocol==="https:"||new URL(url).protocol==="http:"))throw Error("Invalid URL");const tile={name,url,subtitle,tab};if(editIndex>=0)dashboard.tiles[editIndex]=tile;else dashboard.tiles.push(tile);dashboardEditor()}catch(e){$("editStatus").textContent="Use a valid http(s) URL"}};
+ document.querySelectorAll(".editTile").forEach(b=>b.onclick=()=>dashboardEditor(Number(b.dataset.i)));
  document.querySelectorAll(".removeTile").forEach(b=>b.onclick=()=>{dashboard.tiles.splice(Number(b.dataset.i),1);dashboardEditor()});
+ let dragged=null;
+ document.querySelectorAll(".draggable").forEach(el=>{
+   el.addEventListener("dragstart",e=>{dragged=Number(el.dataset.i);e.dataTransfer.effectAllowed="move"});
+   el.addEventListener("dragover",e=>e.preventDefault());
+   el.addEventListener("drop",e=>{e.preventDefault();const target=Number(el.dataset.i);if(dragged===null||target===dragged)return;const [item]=dashboard.tiles.splice(dragged,1);dashboard.tiles.splice(target,0,item);dashboardEditor()});
+ });
  $("cancelDashboard").onclick=async()=>{dashboard=await api("/api/dashboard");render()};
  $("saveDashboard").onclick=async()=>{try{dashboard=await api("/api/dashboard",{method:"PUT",body:JSON.stringify(dashboard)});render()}catch(e){$("editStatus").textContent=e.message}};
 }
+
 function render(){
  let title={overview:"Overview",docker:"Docker environments",infra:"Infrastructure",storage:"Storage / NAS",apps:"Applications",proxmox:"Proxmox cluster",settings:"Service URLs"}[view];
  $("pageTitle").textContent=title;document.querySelectorAll(".nav").forEach(b=>b.classList.toggle("active",b.dataset.view===view));
