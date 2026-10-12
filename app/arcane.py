@@ -78,3 +78,28 @@ async def get_arcane():
                     "error": None, "note": "Live counts and update indicators supplied by Arcane."}
     except (httpx.HTTPError, ValueError):
         raise HTTPException(502, "Arcane unavailable. Check network, TLS CA and API key.")
+
+async def manage_container(environment_id: str, container_id: str, action: str):
+    import re
+    from fastapi import HTTPException
+    if action not in ("start", "stop", "restart", "update"):
+        raise HTTPException(400, "Unsupported action")
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", environment_id):
+        raise HTTPException(400, "Invalid environment")
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", container_id):
+        raise HTTPException(400, "Invalid container")
+    config = _settings()
+    if not config:
+        raise HTTPException(503, "Arcane not configured")
+    base, key = config
+    async with httpx.AsyncClient(timeout=30, verify=os.getenv("ARCANE_CA_BUNDLE") or True, follow_redirects=False) as client:
+        path = "/api/environments/" + environment_id + "/containers/" + container_id
+        try:
+            result = await _get(client, base, key, "/api/environments/" + environment_id + "/containers")
+            if not any(str(item.get("id")) == container_id for item in _items(result) if isinstance(item, dict)):
+                raise HTTPException(404, "Container not found")
+            response = await client.post(base + path + "/" + action, headers={"X-API-Key": key, "Accept": "application/json"})
+            response.raise_for_status()
+            return {"accepted": True, "action": action, "status": response.status_code}
+        except httpx.HTTPError:
+            raise HTTPException(502, "Arcane action failed")
