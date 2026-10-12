@@ -117,6 +117,41 @@ async def save_link(request:Request):
         else: db.execute("DELETE FROM links WHERE name=?",(name,))
     return {"ok":True}
 
+@app.get("/api/dashboard")
+def dashboard_config(request:Request):
+    require(request)
+    with connect() as db:
+        db.execute("CREATE TABLE IF NOT EXISTS dashboard_config (username TEXT PRIMARY KEY, config TEXT NOT NULL)")
+        row=db.execute("SELECT config FROM dashboard_config WHERE username=?",(user(request),)).fetchone()
+    return json.loads(row["config"]) if row else {"tabs":["Main","Apps","Media"],"tiles":[]}
+
+@app.put("/api/dashboard")
+async def save_dashboard(request:Request):
+    require(request);csrf(request)
+    data=await request.json()
+    if not isinstance(data,dict): raise HTTPException(400,"Invalid dashboard")
+    tabs=data.get("tabs",[])
+    tiles=data.get("tiles",[])
+    if not isinstance(tabs,list) or not 1<=len(tabs)<=20 or any(not isinstance(t,str) or not 1<=len(t)<=40 for t in tabs) or len(set(tabs))!=len(tabs):
+        raise HTTPException(400,"Invalid tabs")
+    if not isinstance(tiles,list) or len(tiles)>200: raise HTTPException(400,"Too many tiles")
+    cleaned=[]
+    for tile in tiles:
+        if not isinstance(tile,dict): raise HTTPException(400,"Invalid tile")
+        name,tab,url,subtitle=(tile.get(k,"") for k in ("name","tab","url","subtitle"))
+        if not all(isinstance(x,str) for x in (name,tab,url,subtitle)) or not 1<=len(name)<=80 or tab not in tabs or len(subtitle)>160 or len(url)>2048:
+            raise HTTPException(400,"Invalid tile properties")
+        if url:
+            parsed=urlparse(url)
+            if parsed.scheme not in ("https","http") or not parsed.hostname or parsed.username or parsed.password:
+                raise HTTPException(400,"Invalid tile URL")
+        cleaned.append({"name":name,"tab":tab,"url":url,"subtitle":subtitle})
+    result={"tabs":tabs,"tiles":cleaned}
+    with connect() as db:
+        db.execute("CREATE TABLE IF NOT EXISTS dashboard_config (username TEXT PRIMARY KEY, config TEXT NOT NULL)")
+        db.execute("INSERT OR REPLACE INTO dashboard_config VALUES (?,?)",(user(request),json.dumps(result)))
+    return result
+
 @app.get("/api/proxmox")
 async def proxmox(request:Request):
     require(request)
