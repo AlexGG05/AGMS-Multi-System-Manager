@@ -29,11 +29,75 @@ function renderNav(){$('groupNav').replaceChildren();for(const group of items.fi
 function tile(item){const b=document.createElement('button');b.className='web-tile';const icon=document.createElement('span');icon.className='web-tile-icon';icon.textContent=item.icon||'◈';const name=document.createElement('strong');name.textContent=item.title;const sub=document.createElement('small');sub.textContent=item.url?'Weboberfläche':'Gruppe öffnen';b.append(icon,name,sub);b.onclick=()=>item.url?openFrame(item):showGroup(item.id);return b}
 function showHome(){selectedGroup=null;$('breadcrumb').textContent='ÜBERSICHT';$('pageTitle').textContent=workspace?.name||'Meine Homepage';$('tiles').replaceChildren(...items.filter(n=>!n.parent_id).map(tile));if(!$('tiles').children.length){const p=document.createElement('p');p.textContent='Noch keine Weboberflächen. Über „WebUI hinzufügen“ kannst du deinen ersten Dienst anlegen.';$('tiles').append(p)}panels('homePanel')}
 function showGroup(id){selectedGroup=id;const group=items.find(n=>n.id===id&&!n.url);if(!group)return showHome();$('breadcrumb').textContent=workspace.name;$('pageTitle').textContent=group.title;$('tiles').replaceChildren(...items.filter(n=>n.parent_id===id).map(tile));panels('homePanel')}
-function openFrame(item){if(!item.url)return;try{const u=new URL(item.url);if(!['http:','https:'].includes(u.protocol))throw Error('URL');$('webFrame').src=u.href;$('external').href=u.href;$('frameTitle').textContent=item.title;$('breadcrumb').textContent=workspace.name+' / WEBUI';$('pageTitle').textContent=item.title;panels('framePanel')}catch{notify('Ungültige WebUI-Adresse')}}
+function openFrame(item){if(!item.url)return;if(item.open_mode==='external'){window.open(item.url,'_blank','noopener,noreferrer');return}try{const u=new URL(item.url);if(!['http:','https:'].includes(u.protocol))throw Error('URL');$('webFrame').src=u.href;$('external').href=u.href;$('frameTitle').textContent=item.title;$('breadcrumb').textContent=workspace.name+' / WEBUI';$('pageTitle').textContent=item.title;panels('framePanel')}catch{notify('Ungültige WebUI-Adresse')}}
 function edit(){if(role==='viewer')return;editing=true;panels('editorPanel');drawEditor()}
-function drawEditor(){$('editorItems').replaceChildren();for(let i=0;i<items.length;i++){const item=items[i];const row=document.createElement('div');row.className='web-editor-row';row.draggable=true;row.dataset.index=i;const handle=document.createElement('span');handle.textContent='⠿';const title=document.createElement('input');title.value=item.title;title.placeholder='Name';title.oninput=()=>item.title=title.value;const url=document.createElement('input');url.value=item.url||'';url.placeholder='Gruppe (leer) oder https://...';url.oninput=()=>item.url=url.value||null;const parent=document.createElement('select');for(const [value,label] of [['','Ohne Gruppe'],...items.filter(n=>!n.url&&n.id!==item.id).map(n=>[n.id,n.title])]){const option=document.createElement('option');option.value=value;option.textContent=label;parent.append(option)}parent.value=item.parent_id||'';parent.onchange=()=>item.parent_id=parent.value||null;const remove=document.createElement('button');remove.textContent='Löschen';remove.onclick=()=>{if(!confirm('Eintrag entfernen?'))return;items=items.filter(n=>n.id!==item.id&&n.parent_id!==item.id);drawEditor()};row.append(handle,title,url,parent,remove);row.ondragstart=e=>{e.dataTransfer.setData('text/plain',String(i))};row.ondragover=e=>e.preventDefault();row.ondrop=e=>{e.preventDefault();const from=Number(e.dataTransfer.getData('text/plain'));if(!Number.isInteger(from)||from<0||from>=items.length)return;const [moved]=items.splice(from,1);items.splice(i,0,moved);drawEditor()};$('editorItems').append(row)}}
-function addItem(group){if(role==='viewer')return;const title=prompt(group?'Name der Gruppe':'Name der Weboberfläche');if(!title?.trim())return;let url=null;if(!group){url=prompt('WebUI-Adresse (http:// oder https://)');if(!url)return;try{const u=new URL(url);if(!['http:','https:'].includes(u.protocol))throw Error('invalid')}catch{return notify('Bitte gültige HTTP(S)-Adresse angeben')}}items.push({id:crypto.randomUUID(),title:title.trim(),url,icon:group?'▤':'◈',parent_id:group?null:selectedGroup,min_role:'viewer'});edit()}
-async function save(){try{await api('/api/workspaces/'+workspace.id+'/navigation','PUT',{items});notify('Navigation gespeichert');await openWorkspace(workspace.id)}catch(e){notify(e.message)}}
+function drawEditor(){
+ const root=$('editorItems');root.replaceChildren();
+ const groups=items.filter(n=>!n.url);
+ const heading=document.createElement('h3');heading.textContent=selectedGroup?'Gruppe verwalten: '+(groups.find(g=>g.id===selectedGroup)?.title||'Gruppe'):'Homepage verwalten';root.append(heading);
+ const helper=document.createElement('p');helper.textContent=selectedGroup?'Hier kannst du diese Gruppe und ihre WebUIs bearbeiten.':'Wähle eine Gruppe aus oder erstelle eine neue. WebUIs werden innerhalb der jeweiligen Gruppe verwaltet.';root.append(helper);
+ function action(label,callback){const b=document.createElement('button');b.type='button';b.className='web-editor-action';b.textContent=label;b.onclick=callback;return b}
+ function field(label,value,onchange,type='text'){const wrap=document.createElement('label');wrap.className='web-config-field';const cap=document.createElement('span');cap.textContent=label;const input=document.createElement('input');input.type=type;input.value=value||'';input.oninput=()=>onchange(input.value);wrap.append(cap,input);return wrap}
+ function rowFor(item){
+  const card=document.createElement('div');card.className='web-config-card';
+  const header=document.createElement('strong');header.textContent=item.url?'◈ '+item.title:'▤ '+item.title;card.append(header);
+  card.append(field('Name',item.title,v=>item.title=v));
+  if(item.url){
+   card.append(field('WebUI-Adresse',item.url,v=>item.url=v,'url'));
+   const label=document.createElement('label');label.className='web-config-field';const cap=document.createElement('span');cap.textContent='Öffnungsmodus';const select=document.createElement('select');
+   [['embed','Innerhalb von AGMS (iframe)'],['external','Extern in neuem Tab']].forEach(([v,t])=>{const o=document.createElement('option');o.value=v;o.textContent=t;select.append(o)});
+   select.value=item.open_mode||'embed';select.onchange=()=>item.open_mode=select.value;label.append(cap,select);card.append(label);
+  }
+  const actions=document.createElement('div');actions.className='web-config-actions';
+  actions.append(action('Löschen',()=>{if(!confirm('„'+item.title+'“ wirklich löschen?'+(!item.url?' Alle WebUIs dieser Gruppe werden ebenfalls entfernt.':'')))return;items=items.filter(n=>n.id!==item.id&&n.parent_id!==item.id);if(selectedGroup===item.id)selectedGroup=null;drawEditor()}));
+  card.append(actions);return card;
+ }
+ if(selectedGroup){
+  const group=groups.find(g=>g.id===selectedGroup);
+  if(group)root.append(rowFor(group));
+  const subtitle=document.createElement('h3');subtitle.textContent='WebUIs in dieser Gruppe';root.append(subtitle);
+  root.append(action('＋ WebUI in dieser Gruppe',()=>addItem(false)));
+  for(const item of items.filter(n=>n.url&&n.parent_id===selectedGroup))root.append(rowFor(item));
+  root.append(action('← Alle Gruppen',()=>{selectedGroup=null;drawEditor()}));
+ }else{
+  root.append(action('＋ Neue Gruppe',()=>addItem(true)));
+  for(const group of groups){
+   const line=document.createElement('div');line.className='web-group-config';
+   const name=document.createElement('strong');name.textContent='▤ '+group.title;
+   const count=document.createElement('span');count.textContent=items.filter(n=>n.parent_id===group.id).length+' WebUIs';
+   line.append(name,count,action('Verwalten →',()=>{selectedGroup=group.id;drawEditor()}));root.append(line);
+  }
+  const ungrouped=items.filter(n=>n.url&&!n.parent_id);
+  if(ungrouped.length){const h=document.createElement('h3');h.textContent='Ohne Gruppe';root.append(h);for(const item of ungrouped)root.append(rowFor(item))}
+  root.append(action('＋ WebUI ohne Gruppe',()=>addItem(false)));
+ }
+}
+function addItem(group){
+ if(role==='viewer')return;
+ if(!editing){editing=true;panels('editorPanel')}
+ const name=prompt(group?'Name der neuen Gruppe':'Name der neuen WebUI');
+ if(!name?.trim())return;
+ let url=null,open_mode='embed';
+ if(!group){
+  url=prompt('WebUI-Adresse (https:// oder http://)');
+  if(!url)return;
+  try{const u=new URL(url);if(!['http:','https:'].includes(u.protocol)||!u.hostname||u.username||u.password)throw Error('URL')}catch{return notify('Bitte eine gültige HTTP(S)-Adresse eingeben')}
+  open_mode=confirm('WebUI extern in einem neuen Tab öffnen?\nOK = Extern öffnen\nAbbrechen = In AGMS einbetten')?'external':'embed';
+ }
+ const id=crypto.randomUUID();
+ items.push({id,title:name.trim(),url,icon:group?'▤':'◈',parent_id:group?null:selectedGroup,min_role:'viewer',open_mode});
+ if(group)selectedGroup=id;
+ drawEditor();
+}
+async function save(){
+ try{
+  await api('/api/workspaces/'+workspace.id+'/navigation','PUT',{items});
+  const returnGroup=selectedGroup;
+  await openWorkspace(workspace.id);
+  if(returnGroup&&items.some(n=>n.id===returnGroup&&!n.url))showGroup(returnGroup);
+  notify('Änderungen gespeichert');
+ }catch(e){notify('Speichern fehlgeschlagen: '+e.message)}
+}
 async function team(){try{const data=await api('/api/workspaces/'+workspace.id+'/members');$('members').replaceChildren();for(const m of data.members){const row=document.createElement('div');row.className='web-member';const text=document.createElement('span');text.textContent=(m.email||m.username)+' · '+m.role;row.append(text);if(role==='owner'&&m.role!=='owner'){const remove=document.createElement('button');remove.textContent='Entfernen';remove.onclick=async()=>{if(!confirm('Teammitglied entfernen?'))return;try{await api('/api/workspaces/'+workspace.id+'/members/'+encodeURIComponent(m.username),'DELETE');await team()}catch(e){notify(e.message)}};row.append(remove)}$('members').append(row)}panels('teamPanel')}catch(e){notify(e.message)}}
 async function showNotifications(){try{const data=await api('/api/notifications');const root=$('notifications');root.replaceChildren();$('notificationCount').textContent=String(data.notifications.length);$('notificationCount').hidden=!data.notifications.length;if(!data.notifications.length){const empty=document.createElement('p');empty.className='web-empty';empty.textContent='Keine neuen Benachrichtigungen';root.append(empty)}for(const n of data.notifications){const box=document.createElement('div');box.className='web-member';const label=document.createElement('span');label.textContent='🔔 '+n.message;const open=document.createElement('button');open.textContent='Öffnen';open.onclick=async()=>{await api('/api/notifications/'+n.id+'/read','POST');await init();if(workspaces.some(w=>w.id===n.workspace_id))await openWorkspace(n.workspace_id);await showNotifications()};const dismiss=document.createElement('button');dismiss.textContent='×';dismiss.onclick=async()=>{await api('/api/notifications/'+n.id+'/read','POST');await showNotifications()};box.append(label,open,dismiss);root.append(box)}}catch(e){notify(e.message)}}
 $('renameWorkspace').onclick=async()=>{if(!workspace){notify('Bitte zuerst eine Homepage auswählen');return}if(role!=='owner'){notify('Nur der Besitzer kann diese Homepage umbenennen');return}const name=window.prompt('Neuer Name der Homepage:',workspace.name);if(name===null)return;const cleaned=name.trim();if(!cleaned||cleaned.length>80){notify('Der Name muss zwischen 1 und 80 Zeichen enthalten');return}if(cleaned===workspace.name)return;try{const result=await api('/api/workspaces/'+encodeURIComponent(workspace.id),'PATCH',{name:cleaned});workspace.name=result.name||cleaned;for(const w of workspaces){if(w.id===workspace.id)w.name=workspace.name}const option=Array.from($('workspaceSelect').options).find(o=>o.value===workspace.id);if(option)option.textContent=workspace.name;$('pageTitle').textContent=workspace.name;notify('Homepage erfolgreich umbenannt')}catch(e){notify('Umbenennen fehlgeschlagen: '+e.message);window.alert('Umbenennen fehlgeschlagen: '+e.message)}};
@@ -45,8 +109,8 @@ $('showHome').onclick=showHome;$('back').onclick=()=>selectedGroup?showGroup(sel
 $('reload').onclick=()=>{const f=$('webFrame');f.src=f.src};
 // Fullscreen button uses a self-contained inline handler for mobile Safari reliability.
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&$('framePanel').classList.contains('web-frame-expanded'))setFrameExpanded(false)});
-$('addGroup').onclick=()=>addItem(true);$('addWebui').onclick=()=>addItem(false);
-$('editButton').onclick=edit;$('editorAddGroup').onclick=()=>addItem(true);$('editorAddLink').onclick=()=>addItem(false);
+$('addGroup').onclick=()=>{selectedGroup=null;addItem(true)};$('addWebui').onclick=()=>addItem(false);
+$('editButton').onclick=edit;$('editorAddGroup').onclick=()=>{selectedGroup=null;addItem(true)};$('editorAddLink').onclick=()=>addItem(false);
 $('saveNavigation').onclick=save;$('cancelEdit').onclick=()=>openWorkspace(workspace.id);
 $('addWorkspace').onclick=async()=>{const name=prompt('Name der neuen Homepage');if(!name?.trim())return;try{const data=await api('/api/workspaces','POST',{name:name.trim()});await init();await openWorkspace(data.id)}catch(e){notify(e.message)}};
 $('deleteWorkspace').onclick=async()=>{if(!workspace||role!=='owner')return;if(!confirm('Homepage „'+workspace.name+'“ mit allen Gruppen, Widgets und Teamzuordnungen endgültig löschen?'))return;try{await api('/api/workspaces/'+workspace.id,'DELETE');localStorage.removeItem('codex-active-homepage');workspace=null;await init();notify('Homepage gelöscht')}catch(e){notify(e.message)}};
