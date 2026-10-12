@@ -146,7 +146,10 @@ async def save_dashboard(request:Request):
             parsed=urlparse(url)
             if parsed.scheme not in ("https","http") or not parsed.hostname or parsed.username or parsed.password:
                 raise HTTPException(400,"Invalid tile URL")
-        cleaned.append({"name":name,"tab":tab,"url":url,"subtitle":subtitle})
+        x,y,w,h=(tile.get(k) for k in ("x","y","w","h"))
+        if not all(type(v) is int for v in (x,y,w,h)) or not (0<=x<12 and 0<=y<200 and 1<=w<=12 and 1<=h<=12 and x+w<=12):
+            raise HTTPException(400,"Invalid tile grid position or size")
+        cleaned.append({"name":name,"tab":tab,"url":url,"subtitle":subtitle,"x":x,"y":y,"w":w,"h":h})
     result={"tabs":tabs,"tiles":cleaned}
     with connect() as db:
         db.execute("CREATE TABLE IF NOT EXISTS dashboard_config (username TEXT PRIMARY KEY, config TEXT NOT NULL)")
