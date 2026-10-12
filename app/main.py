@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 from .inventory import GROUPS
 from .arcane import get_arcane, manage_container
+from . import integrations
 
 DB = "/data/homelab.sqlite3"
 SECRET = os.environ.get("SESSION_SECRET", "")
@@ -117,6 +118,44 @@ async def save_link(request:Request):
         else: db.execute("DELETE FROM links WHERE name=?",(name,))
     return {"ok":True}
 
+@app.get("/api/dashboard")
+def dashboard_config(request:Request):
+    require(request)
+    with connect() as db:
+        db.execute("CREATE TABLE IF NOT EXISTS dashboard_config (username TEXT PRIMARY KEY, config TEXT NOT NULL)")
+        row=db.execute("SELECT config FROM dashboard_config WHERE username=?",(user(request),)).fetchone()
+    return json.loads(row["config"]) if row else {"tabs":["Main","Apps","Media"],"tiles":[]}
+
+@app.put("/api/dashboard")
+async def save_dashboard(request:Request):
+    require(request);csrf(request)
+    data=await request.json()
+    if not isinstance(data,dict): raise HTTPException(400,"Invalid dashboard")
+    tabs=data.get("tabs",[])
+    tiles=data.get("tiles",[])
+    if not isinstance(tabs,list) or not 1<=len(tabs)<=20 or any(not isinstance(t,str) or not 1<=len(t)<=40 for t in tabs) or len(set(tabs))!=len(tabs):
+        raise HTTPException(400,"Invalid tabs")
+    if not isinstance(tiles,list) or len(tiles)>200: raise HTTPException(400,"Too many tiles")
+    cleaned=[]
+    for tile in tiles:
+        if not isinstance(tile,dict): raise HTTPException(400,"Invalid tile")
+        name,tab,url,subtitle=(tile.get(k,"") for k in ("name","tab","url","subtitle"))
+        if not all(isinstance(x,str) for x in (name,tab,url,subtitle)) or not 1<=len(name)<=80 or tab not in tabs or len(subtitle)>160 or len(url)>2048:
+            raise HTTPException(400,"Invalid tile properties")
+        if url:
+            parsed=urlparse(url)
+            if parsed.scheme not in ("https","http") or not parsed.hostname or parsed.username or parsed.password:
+                raise HTTPException(400,"Invalid tile URL")
+        x,y,w,h=(tile.get("x",0),tile.get("y",len(cleaned)*2),tile.get("w",4),tile.get("h",2))
+        if not all(type(v) is int for v in (x,y,w,h)) or not (0<=x<12 and 0<=y<200 and 1<=w<=12 and 1<=h<=12 and x+w<=12):
+            raise HTTPException(400,"Invalid tile grid position or size")
+        cleaned.append({"name":name,"tab":tab,"url":url,"subtitle":subtitle,"x":x,"y":y,"w":w,"h":h})
+    result={"tabs":tabs,"tiles":cleaned}
+    with connect() as db:
+        db.execute("CREATE TABLE IF NOT EXISTS dashboard_config (username TEXT PRIMARY KEY, config TEXT NOT NULL)")
+        db.execute("INSERT OR REPLACE INTO dashboard_config VALUES (?,?)",(user(request),json.dumps(result)))
+    return result
+
 @app.get("/api/proxmox")
 async def proxmox(request:Request):
     require(request)
@@ -162,3 +201,69 @@ async def arcane_manage(request: Request, environment_id: str, container_id: str
     require(request)
     csrf(request)
     return await manage_container(environment_id, container_id, action)
+
+@app.get("/api/truenas")
+async def truenas_status(request: Request):
+    require(request)
+    url=os.getenv("TRUENAS_URL","").rstrip("/")
+    key=os.getenv("TRUENAS_API_KEY","")
+    if not url or not key:
+        return {"configured":False,"system":None,"pools":[]}
+    if not url.startswith("https://") and not (url.startswith("http://") and os.getenv("TRUENAS_ALLOW_HTTP")=="true"):
+        raise HTTPException(503,"TrueNAS requires HTTPS or explicitly permitted LAN HTTP")
+    try:
+        async with httpx.AsyncClient(timeout=10,verify=os.getenv("TRUENAS_CA_BUNDLE") or True,follow_redirects=False) as client:
+            headers={"Authorization":"Bearer "+key}
+            sysresp=await client.get(url+"/api/v2.0/system/info",headers=headers)
+            poolsresp=await client.get(url+"/api/v2.0/pool",headers=headers)
+            sysresp.raise_for_status();poolsresp.raise_for_status()
+            info=sysresp.json();pools=poolsresp.json()
+            return {"configured":True,"system":{"hostname":info.get("hostname"),"version":info.get("version"),"uptime_seconds":info.get("uptime_seconds"),"physmem":info.get("physmem")},"pools":[{"name":p.get("name"),"status":p.get("status"),"healthy":p.get("healthy")} for p in pools]}
+    except (httpx.HTTPError,ValueError,TypeError):
+        raise HTTPException(502,"TrueNAS unavailable or API version incompatible")
+
+@app.get("/api/proxmox/guest/{node}/{kind}/{vmid}")
+async def proxmox_guest_details(request:Request,node:str,kind:str,vmid:int):
+    require(request)
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}",node) or kind not in ("qemu","lxc") or not 1<=vmid<=999999999:
+        raise HTTPException(400,"Invalid guest")
+    url=os.getenv("PVE_URL","").rstrip("/")
+    token_id=os.getenv("PVE_TOKEN_ID","")
+    token_secret=os.getenv("PVE_TOKEN_SECRET","")
+    if not all((url,token_id,token_secret)):
+        raise HTTPException(503,"Proxmox not configured")
+    headers={"Authorization":f"PVEAPIToken={token_id}={token_secret}"}
+    path=f"/api2/json/nodes/{node}/{kind}/{vmid}"
+    try:
+        async with httpx.AsyncClient(timeout=10,verify=os.getenv("PVE_CA_BUNDLE") or True,follow_redirects=False) as client:
+            status=await client.get(url+path+"/status/current",headers=headers)
+            config=await client.get(url+path+"/config",headers=headers)
+            status.raise_for_status();config.raise_for_status()
+            current=status.json().get("data",{})
+            configuration=config.json().get("data",{})
+            return {"node":node,"kind":kind,"vmid":vmid,"status":current,"config":configuration}
+    except (httpx.HTTPError,ValueError):
+        raise HTTPException(502,"Unable to read Proxmox guest")
+
+@app.get("/api/integrations")
+def integrations_list(request:Request):
+    require(request)
+    with connect() as db:
+        return {"profiles":integrations.list_profiles(db)}
+
+@app.put("/api/integrations")
+async def integrations_save(request:Request):
+    require(request);csrf(request)
+    payload=await request.json()
+    if not isinstance(payload,dict): raise HTTPException(400,"Invalid payload")
+    with connect() as db:
+        ident=integrations.save(db,payload)
+    return {"id":ident,"ok":True}
+
+@app.delete("/api/integrations/{ident}")
+def integrations_delete(ident:int,request:Request):
+    require(request);csrf(request)
+    with connect() as db:
+        integrations.init(db)
+        db.execute("DELETE FROM integrations WHERE id=?",(ident,))
+    return {"ok":True}
