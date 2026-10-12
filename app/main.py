@@ -62,7 +62,7 @@ def csrf(request):
 def home(request: Request):
     username = user(request)
     page = "workspaces.html" if username else "index.html"
-    return FileResponse(Path(__file__).parent/"static"/page)
+    return FileResponse(Path(__file__).parent/"static"/page, headers={"Cache-Control":"no-store, no-cache, must-revalidate","Pragma":"no-cache","Vary":"Cookie"})
 
 @app.get("/api/me")
 def me(request:Request):
