@@ -1,4 +1,4 @@
-let inventory=null, pve=null, view="overview";
+let inventory=null, pve=null, arcane=null, view="overview";
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 function csrf(){return document.cookie.split("; ").find(x=>x.startsWith("csrf="))?.slice(5)||""}
@@ -10,9 +10,10 @@ function render(){
  $("pageTitle").textContent=title;document.querySelectorAll(".nav").forEach(b=>b.classList.toggle("active",b.dataset.view===view));
  const gs=inventory.groups, dock=gs.filter(g=>g.type==="Docker LXC"), infra=gs.filter(g=>g.type==="Infrastructure"||g.type==="Proxmox"), pi=gs.filter(g=>g.type==="Raspberry Pi");
  let html="";
+ const arcaneInfo=arcane?.configured ? `<div class="panel"><h3>Arcane Live</h3><p>${arcane.error?esc(arcane.error):`${arcane.environments.length} erkannte Umgebungen`}</p><div class="services">${arcane.environments.map(e=>`<span class="service">${esc(e.name)} — ${esc(e.status)}</span>`).join("")}</div><small class="muted">Read-only. Containeraktionen erst nach bestätigter API-Kompatibilität.</small></div>` : `<div class="panel">Arcane nicht konfiguriert. ARCANE_URL und ARCANE_API_KEY setzen.</div>`;
  if(view==="overview"){
    html=`<div class="grid"><div class="tile"><p>Docker LXC environments</p><div class="metric">${dock.length}</div><small class="muted">Inventory count</small></div><div class="tile"><p>Listed Docker services</p><div class="metric">${dock.reduce((n,g)=>n+g.items.length,0)}</div><small class="muted">Not live container counts</small></div><div class="tile"><p>Proxmox cluster nodes</p><div class="metric">${pve?.nodes?.length??"—"}</div><small class="muted">${pve?.configured?"API configured":"Connect API to view"}</small></div><div class="tile"><p>Proxmox guests</p><div class="metric">${pve?.guests?.length??"—"}</div><small class="muted">VMs + LXCs reported by API</small></div></div><h2 class="section">Docker environments</h2>${cards(dock)}<h2 class="section">Other systems</h2>${cards([...pi,...infra])}`;
- }else if(view==="docker")html=`<p class="muted">Your Docker environments. For live counts and update availability, a future authenticated Arcane connector is required.</p>${cards(dock)}`;
+ }else if(view==="docker")html=`${arcaneInfo}<h2 class="section">Inventar</h2>${cards(dock)}`;
  else if(view==="infra")html=cards([...infra,...pi]);
  else if(view==="apps")html=cards(gs.filter(g=>g.type==="Docker LXC"||g.type==="Raspberry Pi"));
  else if(view==="proxmox"){
@@ -25,8 +26,8 @@ function render(){
  $("content").innerHTML=html;
  if(view==="settings")document.querySelectorAll(".save").forEach(b=>b.onclick=async()=>{let input=document.querySelectorAll(".urlinput")[Number(b.dataset.index)];try{await api("/api/links",{method:"PUT",body:JSON.stringify({name:input.dataset.name,url:input.value})});inventory.links[input.dataset.name]=input.value;$("saveMessage").textContent="Saved "+input.dataset.name}catch(e){$("saveMessage").textContent=e.message}});
 }
-async function start(){let me=await api("/api/me");$("login").hidden=!!me.username;$("shell").hidden=!me.username;if(me.username){$("who").textContent=me.username;inventory=await api("/api/inventory");try{pve=await api("/api/proxmox")}catch(e){pve={configured:true,error:e.message}}render()}}
+async function start(){let me=await api("/api/me");$("login").hidden=!!me.username;$("shell").hidden=!me.username;if(me.username){$("who").textContent=me.username;inventory=await api("/api/inventory");try{arcane=await api("/api/arcane")}catch(e){arcane={configured:true,environments:[],error:e.message}}try{pve=await api("/api/proxmox")}catch(e){pve={configured:true,error:e.message}}render()}}
 $("loginForm").onsubmit=async e=>{e.preventDefault();$("loginError").textContent="";try{await api("/api/login",{method:"POST",body:JSON.stringify({username:$("username").value,password:$("password").value})});$("password").value="";await start()}catch(err){$("loginError").textContent=err.message}};
 document.querySelectorAll(".nav").forEach(b=>b.onclick=()=>{view=b.dataset.view;render()});
-$("logout").onclick=async()=>{await api("/api/logout",{method:"POST"});inventory=null;pve=null;await start()};
+$("logout").onclick=async()=>{await api("/api/logout",{method:"POST"});inventory=null;pve=null;arcane=null;await start()};
 start().catch(e=>{$("loginError").textContent=e.message});
