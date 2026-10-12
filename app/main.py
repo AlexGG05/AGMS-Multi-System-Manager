@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 from .inventory import GROUPS
 from .arcane import get_arcane, manage_container
-from . import integrations
+from . import integrations, workspaces
 
 DB = "/data/homelab.sqlite3"
 SECRET = os.environ.get("SESSION_SECRET", "")
@@ -35,6 +35,7 @@ def init():
         db.execute("CREATE TABLE IF NOT EXISTS links (name TEXT PRIMARY KEY, url TEXT NOT NULL)")
         if not db.execute("SELECT 1 FROM users WHERE username=?", (ADMIN,)).fetchone():
             db.execute("INSERT INTO users VALUES (?,?)", (ADMIN, bcrypt.hashpw(PASSWORD.encode(), bcrypt.gensalt()).decode()))
+        workspaces.install(db)
 
 def user(request):
     cookie = request.cookies.get("session", "")
@@ -59,7 +60,8 @@ def csrf(request):
 
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request):
-    page = "control-center.html" if user(request) else "index.html"
+    username = user(request)
+    page = "workspaces.html" if username and username != ADMIN else ("control-center.html" if username else "index.html")
     return FileResponse(Path(__file__).parent/"static"/page)
 
 @app.get("/api/me")
@@ -82,6 +84,9 @@ async def login(request:Request):
     if not row or not bcrypt.checkpw(password.encode(),row["password_hash"].encode()):
         failures[ip] = recent+[now]
         raise HTTPException(401,"Invalid credentials")
+    with connect() as db:
+        status=db.execute("SELECT verified_at FROM account_security WHERE username=?",(username,)).fetchone()
+    if username!=ADMIN and (not status or not status["verified_at"]): raise HTTPException(403,"Please verify your email before login")
     failures.pop(ip,None)
     response=JSONResponse({"ok":True})
     response.set_cookie("session",serializer.dumps({"u":username}),httponly=True,secure=SECURE,samesite="lax",max_age=28800,path="/")
@@ -268,3 +273,21 @@ def integrations_delete(ident:int,request:Request):
         integrations.init(db)
         db.execute("DELETE FROM integrations WHERE id=?",(ident,))
     return {"ok":True}
+
+# New public accounts must never inherit the legacy single-admin management APIs.
+# Workspace APIs enforce membership and roles independently.
+app.include_router(workspaces.router(connect, require, csrf, serializer, SECURE, ORIGIN))
+
+@app.middleware("http")
+async def legacy_admin_boundary(request:Request, call_next):
+    path=request.url.path
+    if path.startswith("/api/") and not (
+        path in ("/api/login","/api/logout","/api/me","/api/register","/api/account/verify","/api/account/forgot-password","/api/account/reset-password")
+        or path.startswith("/api/workspaces")
+        or path.startswith("/api/admin/accounts")
+        or path=="/api/invitations/accept"
+    ):
+        username=user(request)
+        if username and username!=ADMIN:
+            return JSONResponse({"detail":"Legacy management API is administrator-only"},status_code=403)
+    return await call_next(request)
