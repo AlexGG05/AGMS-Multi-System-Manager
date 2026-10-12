@@ -58,8 +58,9 @@ def csrf(request):
         raise HTTPException(403, "CSRF verification failed")
 
 @app.get("/", response_class=HTMLResponse)
-def home():
-    return FileResponse(Path(__file__).parent/"static"/"index.html")
+def home(request: Request):
+    page = "control-center.html" if user(request) else "index.html"
+    return FileResponse(Path(__file__).parent/"static"/page)
 
 @app.get("/api/me")
 def me(request:Request):
