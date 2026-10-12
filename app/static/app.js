@@ -90,7 +90,7 @@ async function start(){let me=await api("/api/me");$("login").hidden=!!me.userna
    dashboard.tiles=starter.map(([name,subtitle,tab,x,y,w,h])=>({name,subtitle,tab,x,y,w,h,url:inventory.links[name]||inventory.links[name.toLowerCase()]||""}));
  }
  try{arcane=await api("/api/arcane")}catch(e){arcane={configured:true,environments:[],error:e.message}}try{pve=await api("/api/proxmox")}catch(e){pve={configured:true,error:e.message}}render()}}
-$("loginForm").onsubmit=async e=>{e.preventDefault();$("loginError").textContent="";try{await api("/api/login",{method:"POST",body:JSON.stringify({username:$("username").value,password:$("password").value})});$("password").value="";await start()}catch(err){$("loginError").textContent=err.message}};
+$("loginForm").onsubmit=async e=>{e.preventDefault();$("loginError").textContent="";try{await api("/api/login",{method:"POST",body:JSON.stringify({username:$("username").value,password:$("password").value})});$("password").value="";window.location.assign("/")}catch(err){$("loginError").textContent=err.message}};
 document.querySelectorAll(".nav").forEach(b=>b.onclick=()=>{view=b.dataset.view;render()});
 $("logout").onclick=async()=>{await api("/api/logout",{method:"POST"});inventory=null;pve=null;arcane=null;await start()};
 start().catch(e=>{$("loginError").textContent=e.message});
