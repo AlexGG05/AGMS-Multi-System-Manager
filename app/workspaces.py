@@ -180,4 +180,63 @@ def router(connect, require, csrf, serializer, secure, origin):
             db.execute("INSERT OR IGNORE INTO workspace_members(workspace_id,username,role) VALUES(?,?,?)",(invite["workspace_id"],username,invite["role"]))
             db.execute("UPDATE workspace_invitations SET accepted_at=? WHERE id=?",(int(time.time()),invite["id"]))
         return {"ok":True,"workspace_id":invite["workspace_id"]}
+
+    def token_action(db, token, purpose):
+        hashed=hashlib.sha256(token.encode()).hexdigest()
+        row=db.execute("SELECT username FROM account_tokens WHERE token_hash=? AND purpose=? AND used_at IS NULL AND expires_at>?",(hashed,purpose,int(time.time()))).fetchone()
+        if not row: raise HTTPException(400,"Invalid or expired token")
+        db.execute("UPDATE account_tokens SET used_at=? WHERE token_hash=?",(int(time.time()),hashed))
+        return row["username"]
+    def guard(request,kind,limit=5):
+        if request.headers.get("origin","").rstrip("/")!=origin: raise HTTPException(403,"Origin mismatch")
+        key=(kind,request.client.host if request.client else "unknown")
+        now=time.monotonic();recent=[x for x in attempts.get(key,[]) if now-x<3600]
+        if len(recent)>=limit: raise HTTPException(429,"Too many requests")
+        attempts[key]=recent+[now]
+    @api.post("/api/account/verify")
+    async def verify(request:Request):
+        guard(request,"verify",20)
+        body=await request.json()
+        with connect() as db:
+            username=token_action(db,str(body.get("token","")),"verify")
+            db.execute("UPDATE account_security SET verified_at=? WHERE username=?",(int(time.time()),username))
+        return {"ok":True}
+    @api.post("/api/account/forgot-password")
+    async def forgot(request:Request):
+        guard(request,"forgot",4)
+        body=await request.json();email=str(body.get("email","")).strip().lower()
+        if EMAIL.fullmatch(email):
+            with connect() as db:
+                row=db.execute("SELECT username FROM account_profiles WHERE email=?",(email,)).fetchone()
+                if row:
+                    token=secrets.token_urlsafe(32)
+                    db.execute("INSERT INTO account_tokens VALUES(?,?,?,?,NULL)",(hashlib.sha256(token.encode()).hexdigest(),row["username"],"reset",int(time.time())+1800))
+            if row: send_email(email,"CodeX Homelab: Passwort zurücksetzen","Passwort zurücksetzen (30 Minuten): "+origin+"/static/reset-password.html?token="+token)
+        return {"ok":True,"message":"If this email exists, a reset message will be sent"}
+    @api.post("/api/account/reset-password")
+    async def reset(request:Request):
+        guard(request,"reset",8)
+        body=await request.json();password=str(body.get("password",""))
+        if not 16<=len(password)<=72: raise HTTPException(400,"Password must be 16-72 characters")
+        with connect() as db:
+            username=token_action(db,str(body.get("token","")),"reset")
+            db.execute("UPDATE users SET password_hash=? WHERE username=?",(bcrypt.hashpw(password.encode(),bcrypt.gensalt()).decode(),username))
+        return {"ok":True}
+    @api.get("/api/admin/accounts")
+    def accounts(request:Request):
+        if identity(request)!=os.getenv("ADMIN_USERNAME","admin"): raise HTTPException(403,"Admin only")
+        with connect() as db:
+            rows=db.execute("SELECT p.username,p.email,p.role,COALESCE(s.tier,0) tier,s.verified_at FROM account_profiles p LEFT JOIN account_security s ON s.username=p.username ORDER BY p.created_at DESC LIMIT 500").fetchall()
+        return {"accounts":[dict(x) for x in rows]}
+    @api.put("/api/admin/accounts/{username}/tier")
+    async def tier(request:Request,username:str):
+        if identity(request)!=os.getenv("ADMIN_USERNAME","admin"): raise HTTPException(403,"Admin only")
+        csrf(request);body=await request.json();level=body.get("tier")
+        if type(level)!=int or level not in (0,1,2,3): raise HTTPException(400,"Tier must be 0-3")
+        if username==os.getenv("ADMIN_USERNAME","admin"): raise HTTPException(400,"Cannot change admin tier")
+        with connect() as db:
+            if not db.execute("SELECT 1 FROM users WHERE username=?",(username,)).fetchone(): raise HTTPException(404,"Unknown user")
+            db.execute("INSERT INTO account_security(username,tier) VALUES(?,?) ON CONFLICT(username) DO UPDATE SET tier=excluded.tier",(username,level))
+            db.execute("UPDATE account_profiles SET role=? WHERE username=?",("premium" if level else "user",username))
+        return {"ok":True,"tier":level}
     return api
