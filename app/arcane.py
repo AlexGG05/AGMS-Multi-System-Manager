@@ -54,7 +54,27 @@ async def get_arcane():
                     "id": ident, "name": str(env.get("name") or env.get("displayName") or ident),
                     "status": str(env.get("status") or "unknown"),
                 })
-            return {"configured": True, "environments": safe_envs, "containers": [],
-                    "error": None, "note": "Environment discovery active. Container endpoint awaits version-specific OpenAPI verification."}
+            all_containers = []
+            for env in safe_envs:
+                raw = await _get(client, base, key, "/api/environments/" + env["id"] + "/containers")
+                rows = raw.get("data", []) if isinstance(raw, dict) else []
+                if not isinstance(rows, list):
+                    rows = []
+                env["containers"] = [
+                    {"id": str(item.get("id", "")),
+                     "name": str((item.get("names") or ["unnamed"])[0]),
+                     "image": str(item.get("image") or ""),
+                     "state": str(item.get("state") or "unknown"),
+                     "hasUpdate": (item.get("updateInfo") or {}).get("hasUpdate") is True}
+                    for item in rows if isinstance(item, dict)
+                ]
+                counts = raw.get("counts", {}) if isinstance(raw, dict) else {}
+                env["running"] = counts.get("runningContainers", 0)
+                env["stopped"] = counts.get("stoppedContainers", 0)
+                env["total"] = counts.get("totalContainers", len(rows))
+                env["updates"] = sum(x["hasUpdate"] for x in env["containers"])
+                all_containers.extend(env["containers"])
+            return {"configured": True, "environments": safe_envs, "containers": all_containers,
+                    "error": None, "note": "Live counts and update indicators supplied by Arcane."}
     except (httpx.HTTPError, ValueError):
         raise HTTPException(502, "Arcane unavailable. Check network, TLS CA and API key.")
