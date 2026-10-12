@@ -197,3 +197,46 @@ async def arcane_manage(request: Request, environment_id: str, container_id: str
     require(request)
     csrf(request)
     return await manage_container(environment_id, container_id, action)
+
+@app.get("/api/truenas")
+async def truenas_status(request: Request):
+    require(request)
+    url=os.getenv("TRUENAS_URL","").rstrip("/")
+    key=os.getenv("TRUENAS_API_KEY","")
+    if not url or not key:
+        return {"configured":False,"system":None,"pools":[]}
+    if not url.startswith("https://") and not (url.startswith("http://") and os.getenv("TRUENAS_ALLOW_HTTP")=="true"):
+        raise HTTPException(503,"TrueNAS requires HTTPS or explicitly permitted LAN HTTP")
+    try:
+        async with httpx.AsyncClient(timeout=10,verify=os.getenv("TRUENAS_CA_BUNDLE") or True,follow_redirects=False) as client:
+            headers={"Authorization":"Bearer "+key}
+            sysresp=await client.get(url+"/api/v2.0/system/info",headers=headers)
+            poolsresp=await client.get(url+"/api/v2.0/pool",headers=headers)
+            sysresp.raise_for_status();poolsresp.raise_for_status()
+            info=sysresp.json();pools=poolsresp.json()
+            return {"configured":True,"system":{"hostname":info.get("hostname"),"version":info.get("version"),"uptime_seconds":info.get("uptime_seconds"),"physmem":info.get("physmem")},"pools":[{"name":p.get("name"),"status":p.get("status"),"healthy":p.get("healthy")} for p in pools]}
+    except (httpx.HTTPError,ValueError,TypeError):
+        raise HTTPException(502,"TrueNAS unavailable or API version incompatible")
+
+@app.get("/api/proxmox/guest/{node}/{kind}/{vmid}")
+async def proxmox_guest_details(request:Request,node:str,kind:str,vmid:int):
+    require(request)
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}",node) or kind not in ("qemu","lxc") or not 1<=vmid<=999999999:
+        raise HTTPException(400,"Invalid guest")
+    url=os.getenv("PVE_URL","").rstrip("/")
+    token_id=os.getenv("PVE_TOKEN_ID","")
+    token_secret=os.getenv("PVE_TOKEN_SECRET","")
+    if not all((url,token_id,token_secret)):
+        raise HTTPException(503,"Proxmox not configured")
+    headers={"Authorization":f"PVEAPIToken={token_id}={token_secret}"}
+    path=f"/api2/json/nodes/{node}/{kind}/{vmid}"
+    try:
+        async with httpx.AsyncClient(timeout=10,verify=os.getenv("PVE_CA_BUNDLE") or True,follow_redirects=False) as client:
+            status=await client.get(url+path+"/status/current",headers=headers)
+            config=await client.get(url+path+"/config",headers=headers)
+            status.raise_for_status();config.raise_for_status()
+            current=status.json().get("data",{})
+            configuration=config.json().get("data",{})
+            return {"node":node,"kind":kind,"vmid":vmid,"status":current,"config":configuration}
+    except (httpx.HTTPError,ValueError):
+        raise HTTPException(502,"Unable to read Proxmox guest")
