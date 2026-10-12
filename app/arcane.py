@@ -1,0 +1,105 @@
+"""Read-only Arcane connection. Never expose credentials or forward arbitrary URLs."""
+import os
+import httpx
+from fastapi import HTTPException
+
+def _settings():
+    base = os.getenv("ARCANE_URL", "").strip().rstrip("/")
+    key = os.getenv("ARCANE_API_KEY", "").strip()
+    if not base or not key:
+        return None
+    if not base.startswith(("https://", "http://")):
+        raise HTTPException(503, "ARCANE_URL must be an http(s) URL")
+    if base.startswith("http://") and os.getenv("ARCANE_ALLOW_HTTP", "false").lower() != "true":
+        raise HTTPException(503, "Arcane HTTP requires explicit ARCANE_ALLOW_HTTP=true on trusted LAN")
+    return base, key
+
+def _items(payload):
+    if isinstance(payload, list):
+        return payload
+    if isinstance(payload, dict):
+        for name in ("data", "items", "environments", "containers", "results"):
+            value = payload.get(name)
+            if isinstance(value, list):
+                return value
+            if isinstance(value, dict):
+                nested = _items(value)
+                if nested:
+                    return nested
+    return []
+
+async def _get(client, base, key, path):
+    resp = await client.get(base + path, headers={"X-Api-Key": key, "Accept": "application/json"})
+    resp.raise_for_status()
+    return resp.json()
+
+async def get_arcane():
+    settings = _settings()
+    if not settings:
+        return {"configured": False, "environments": [], "containers": [], "error": None}
+    base, key = settings
+    verify = os.getenv("ARCANE_CA_BUNDLE") or True
+    try:
+        async with httpx.AsyncClient(timeout=10, verify=verify, follow_redirects=False) as client:
+            environments = _items(await _get(client, base, key, "/api/environments"))
+            # An invalid / unauthorized response never gets misreported as an empty fleet.
+            safe_envs = []
+            for env in environments:
+                if not isinstance(env, dict):
+                    continue
+                ident = str(env.get("id", ""))
+                if not ident or not ident.replace("-", "").isalnum():
+                    continue
+                safe_envs.append({
+                    "id": ident, "name": str(env.get("name") or env.get("displayName") or ident),
+                    "status": str(env.get("status") or "unknown"),
+                })
+            all_containers = []
+            for env in safe_envs:
+                raw = await _get(client, base, key, "/api/environments/" + env["id"] + "/containers")
+                rows = raw.get("data", []) if isinstance(raw, dict) else []
+                if not isinstance(rows, list):
+                    rows = []
+                env["containers"] = [
+                    {"id": str(item.get("id", "")),
+                     "name": str((item.get("names") or ["unnamed"])[0]),
+                     "image": str(item.get("image") or ""),
+                     "state": str(item.get("state") or "unknown"),
+                     "hasUpdate": (item.get("updateInfo") or {}).get("hasUpdate") is True}
+                    for item in rows if isinstance(item, dict)
+                ]
+                counts = raw.get("counts", {}) if isinstance(raw, dict) else {}
+                env["running"] = counts.get("runningContainers", 0)
+                env["stopped"] = counts.get("stoppedContainers", 0)
+                env["total"] = counts.get("totalContainers", len(rows))
+                env["updates"] = sum(x["hasUpdate"] for x in env["containers"])
+                all_containers.extend(env["containers"])
+            return {"configured": True, "environments": safe_envs, "containers": all_containers,
+                    "error": None, "note": "Live counts and update indicators supplied by Arcane."}
+    except (httpx.HTTPError, ValueError):
+        raise HTTPException(502, "Arcane unavailable. Check network, TLS CA and API key.")
+
+async def manage_container(environment_id: str, container_id: str, action: str):
+    import re
+    from fastapi import HTTPException
+    if action not in ("start", "stop", "restart", "update"):
+        raise HTTPException(400, "Unsupported action")
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", environment_id):
+        raise HTTPException(400, "Invalid environment")
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", container_id):
+        raise HTTPException(400, "Invalid container")
+    config = _settings()
+    if not config:
+        raise HTTPException(503, "Arcane not configured")
+    base, key = config
+    async with httpx.AsyncClient(timeout=30, verify=os.getenv("ARCANE_CA_BUNDLE") or True, follow_redirects=False) as client:
+        path = "/api/environments/" + environment_id + "/containers/" + container_id
+        try:
+            result = await _get(client, base, key, "/api/environments/" + environment_id + "/containers")
+            if not any(str(item.get("id")) == container_id for item in _items(result) if isinstance(item, dict)):
+                raise HTTPException(404, "Container not found")
+            response = await client.post(base + path + "/" + action, headers={"X-API-Key": key, "Accept": "application/json"})
+            response.raise_for_status()
+            return {"accepted": True, "action": action, "status": response.status_code}
+        except httpx.HTTPError:
+            raise HTTPException(502, "Arcane action failed")

@@ -7,6 +7,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, File
 from fastapi.staticfiles import StaticFiles
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 from .inventory import GROUPS
+from .arcane import get_arcane, manage_container
 
 DB = "/data/homelab.sqlite3"
 SECRET = os.environ.get("SESSION_SECRET", "")
@@ -150,3 +151,14 @@ async def proxmox(request:Request):
 @app.get("/health")
 def health():
     return {"status":"ok"}
+
+@app.get("/api/arcane")
+async def arcane_status(request: Request):
+    require(request)
+    return await get_arcane()
+
+@app.post("/api/arcane/environments/{environment_id}/containers/{container_id}/{action}")
+async def arcane_manage(request: Request, environment_id: str, container_id: str, action: str):
+    require(request)
+    csrf(request)
+    return await manage_container(environment_id, container_id, action)
