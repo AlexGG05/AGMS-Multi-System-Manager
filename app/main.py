@@ -84,6 +84,9 @@ async def login(request:Request):
     if not row or not bcrypt.checkpw(password.encode(),row["password_hash"].encode()):
         failures[ip] = recent+[now]
         raise HTTPException(401,"Invalid credentials")
+    with connect() as db:
+        status=db.execute("SELECT verified_at FROM account_security WHERE username=?",(username,)).fetchone()
+    if username!=ADMIN and (not status or not status["verified_at"]): raise HTTPException(403,"Please verify your email before login")
     failures.pop(ip,None)
     response=JSONResponse({"ok":True})
     response.set_cookie("session",serializer.dumps({"u":username}),httponly=True,secure=SECURE,samesite="lax",max_age=28800,path="/")
@@ -279,8 +282,9 @@ app.include_router(workspaces.router(connect, require, csrf, serializer, SECURE,
 async def legacy_admin_boundary(request:Request, call_next):
     path=request.url.path
     if path.startswith("/api/") and not (
-        path in ("/api/login","/api/logout","/api/me","/api/register")
+        path in ("/api/login","/api/logout","/api/me","/api/register","/api/account/verify","/api/account/forgot-password","/api/account/reset-password")
         or path.startswith("/api/workspaces")
+        or path.startswith("/api/admin/accounts")
         or path=="/api/invitations/accept"
     ):
         username=user(request)
