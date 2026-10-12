@@ -62,7 +62,7 @@ def router(connect, require, csrf, serializer, secure, origin):
         if edit and row["role"] not in ("owner","editor"): raise HTTPException(403,"Editor permission required")
         return row["role"]
     def ensure_default(db, username):
-        if db.execute("SELECT 1 FROM workspace_members WHERE username=? LIMIT 1",(username,)).fetchone(): return
+        if db.execute("SELECT 1 FROM workspaces WHERE owner=? LIMIT 1",(username,)).fetchone(): return
         wid=secrets.token_hex(12)
         db.execute("INSERT INTO workspaces(id,name,owner) VALUES(?,?,?)",(wid,"Mein Homelab",username))
         db.execute("INSERT INTO workspace_members(workspace_id,username,role) VALUES(?,?,'owner')",(wid,username))
@@ -119,6 +119,24 @@ def router(connect, require, csrf, serializer, secure, origin):
             db.execute("INSERT INTO workspaces(id,name,owner) VALUES(?,?,?)",(wid,name,username))
             db.execute("INSERT INTO workspace_members(workspace_id,username,role) VALUES(?,?,'owner')",(wid,username))
         return {"id":wid,"name":name,"role":"owner"}
+    @api.delete("/api/workspaces/{wsid}")
+    def delete_workspace(request:Request,wsid:str):
+        username=identity(request);csrf(request)
+        with connect() as db:
+            membership(db,wsid,username,owner=True)
+            db.execute("DELETE FROM workspace_invitations WHERE workspace_id=?",(wsid,))
+            db.execute("DELETE FROM workspace_navigation WHERE workspace_id=?",(wsid,))
+            db.execute("DELETE FROM workspace_members WHERE workspace_id=?",(wsid,))
+            db.execute("DELETE FROM workspaces WHERE id=? AND owner=?",(wsid,username))
+        return {"ok":True}
+    @api.delete("/api/workspaces/{wsid}/members/{member}")
+    def remove_member(request:Request,wsid:str,member:str):
+        username=identity(request);csrf(request)
+        with connect() as db:
+            membership(db,wsid,username,owner=True)
+            if member==username: raise HTTPException(400,"Owner cannot be removed")
+            db.execute("DELETE FROM workspace_members WHERE workspace_id=? AND username=? AND role!='owner'",(wsid,member))
+        return {"ok":True}
     @api.get("/api/workspaces/{wsid}")
     def workspace(request:Request,wsid:str):
         username=identity(request)
