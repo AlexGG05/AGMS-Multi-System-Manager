@@ -139,7 +139,6 @@ def router(connect, require, csrf, serializer, secure, origin):
         body=await request.json()
         email=str(body.get("email","")).strip().lower()
         password=str(body.get("password",""))
-        display_name=validate_display_name(body.get("display_name") or email.split("@")[0][:32])
         if not EMAIL.fullmatch(email):raise HTTPException(400,"Ungültige E-Mail-Adresse")
         with connect() as db:
             row=db.execute("SELECT password_hash FROM users WHERE username=?",(username,)).fetchone()
