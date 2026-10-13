@@ -7,6 +7,7 @@ import os
 import re
 import socket
 import ipaddress
+from html import escape
 from urllib.parse import urlsplit, urlunsplit, urljoin
 import httpx
 from fastapi import APIRouter, Request, HTTPException
@@ -104,7 +105,17 @@ def setup(connect, require):
         ctype = upstream.headers.get("content-type", "").lower()
         data = upstream.content
         if "text/html" in ctype or "text/css" in ctype:
-            data = rewrite_markup(data.decode("utf-8", errors="replace"), origin, prefix).encode("utf-8")
+            markup = rewrite_markup(data.decode("utf-8", errors="replace"), origin, prefix)
+            if "text/html" in ctype:
+                shim = ('<script src="/static/proxy-shim.js" data-prefix="' + escape(prefix, quote=True) +
+                        '" data-upstream="' + escape(origin, quote=True) +
+                        '" data-cookie-prefix="' + escape("agms_proxy_" + itemid + "_", quote=True) +
+                        '"></script>')
+                if re.search(r"(?i)<head(?:\s[^>]*)?>", markup):
+                    markup = re.sub(r"(?i)(<head(?:\s[^>]*)?>)", lambda m: m.group(1) + shim, markup, count=1)
+                else:
+                    markup = shim + markup
+            data = markup.encode("utf-8")
         result = Response(content=data, status_code=upstream.status_code, headers=response_headers)
         if "location" in upstream.headers:
             result.headers["location"] = rewrite_location(upstream.headers["location"], origin, prefix)
