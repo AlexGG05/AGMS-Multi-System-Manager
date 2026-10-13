@@ -26,7 +26,7 @@ function statusIndicator(item,container){
 tile=function(item){
  const b=origTile(item);if(item.color)b.style.borderColor=item.color;
  if(item.color)b.style.setProperty('--agms-tile-color',item.color);
- const icon=b.querySelector('.web-tile-icon');if(icon)icon.style.color=item.color||'';
+ const icon=b.querySelector('.web-tile-icon');if(icon){icon.style.color=item.color||'';if(item.icon_url&&/^https:\/\/[^\s]+$/i.test(item.icon_url)){const img=document.createElement('img');img.src=item.icon_url;img.alt='';img.loading='lazy';img.referrerPolicy='no-referrer';img.className='agms-logo';img.onerror=()=>{img.remove();icon.textContent=item.icon||'◈'};icon.replaceChildren(img)}}
  if(item.favorite){const star=make('span','★','agms-tile-star');star.title='Favorit';b.append(star)}
  if(item.url)statusIndicator(item,b);
  return b;
@@ -76,7 +76,7 @@ file.addEventListener('change',async()=>{
    if(url){const u=new URL(url);if(!['http:','https:'].includes(u.protocol)||!u.hostname||u.username||u.password)throw Error('Ungültige URL')}
    if(n.parent_id&&!map.has(n.parent_id))throw Error('Unbekannte Gruppe');
    const color=/^#[0-9a-f]{6}$/i.test(n.color||'')?n.color:'';
-   return {id:map.get(n.id),parent_id:n.parent_id?map.get(n.parent_id):null,title:n.title.trim(),icon:String(n.icon||'◈').slice(0,40),url,min_role:['viewer','editor','owner'].includes(n.min_role)?n.min_role:'viewer',open_mode:n.open_mode==='external'?'external':'embed',favorite:!!n.favorite,color};
+   return {id:map.get(n.id),parent_id:n.parent_id?map.get(n.parent_id):null,title:n.title.trim(),icon:String(n.icon||'◈').slice(0,40),url,min_role:['viewer','editor','owner'].includes(n.min_role)?n.min_role:'viewer',open_mode:n.open_mode==='external'?'external':'embed',favorite:!!n.favorite,color,icon_url:typeof n.icon_url==='string'&&/^https:\/\/[^\s]+$/i.test(n.icon_url)?n.icon_url:''};
   });
   if(!confirm(imported.length+' Einträge importieren? Bestehende Einträge bleiben erhalten.'))return;
   if(items.length+imported.length>150)throw Error('Maximal 150 Einträge je Homepage');
