@@ -340,6 +340,19 @@ def router(connect, require, csrf, serializer, secure, origin):
         with connect() as db:
             membership(db,wsid,username,edit=True)
             require_workspace_editable(db,wsid)
+            proxy_origins=set()
+            for row in cleaned:
+                if row[8]=="proxy":
+                    parsed=urlparse(row[5])
+                    proxy_origins.add(f"{parsed.scheme}://{parsed.netloc}".lower())
+            existing={r["origin"] for r in db.execute("SELECT origin FROM proxy_allowed_origins").fetchall()}
+            for origin in proxy_origins-existing:
+                pending=db.execute("SELECT status FROM proxy_requests WHERE origin=?",(origin,)).fetchone()
+                if not pending:
+                    db.execute("INSERT INTO proxy_requests(origin,requested_by) VALUES(?,?)",(origin,username))
+                    db.execute("INSERT INTO workspace_notifications(id,username,workspace_id,message) VALUES(?,?,?,?)",
+                               (secrets.token_hex(12),os.getenv("ADMIN_USERNAME","admin"),None,
+                                "Neue Proxy-Freigabe angefragt: "+origin+" (von "+username+")"))
             db.execute("DELETE FROM workspace_navigation WHERE workspace_id=?",(wsid,))
             db.executemany("INSERT INTO workspace_navigation(id,workspace_id,parent_id,title,icon,url,position,min_role,open_mode,favorite,color,icon_url) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",cleaned)
         return {"ok":True}
