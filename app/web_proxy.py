@@ -15,7 +15,7 @@ from fastapi.responses import Response
 router = APIRouter()
 HOP = {"host", "connection", "transfer-encoding", "content-length", "content-encoding",
        "accept-encoding", "cookie", "authorization", "proxy-authorization", "forwarded",
-       "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto"}
+       "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto", "origin", "referer"}
 STRIP = {"content-security-policy", "content-security-policy-report-only", "x-frame-options",
          "content-length", "transfer-encoding", "content-encoding", "set-cookie", "location",
          "access-control-allow-origin", "clear-site-data"}
@@ -84,6 +84,10 @@ def setup(connect, require):
         headers = {k: v for k, v in request.headers.items() if k.lower() not in HOP and not k.lower().startswith("x-forwarded-")}
         headers["accept-encoding"] = "identity"
         headers["host"] = base.netloc
+        headers["origin"] = origin
+        headers["referer"] = origin + "/" + path
+        headers["x-forwarded-proto"] = "https"
+        headers["x-forwarded-host"] = base.netloc
         cookie_prefix = "agms_proxy_" + itemid + "_"
         cookies = {key[len(cookie_prefix):]: val for key, val in request.cookies.items() if key.startswith(cookie_prefix)}
         try:
@@ -107,8 +111,11 @@ def setup(connect, require):
             cookie_value = value.split(";", 1)[0]
             attrs = [a.strip() for a in value.split(";")[1:]]
             expires = [a for a in attrs if a.lower().startswith(("expires=", "max-age="))]
+            http_only = any(a.lower() == "httponly" for a in attrs)
+            same_site = next((a for a in attrs if a.lower().startswith("samesite=")), "SameSite=Lax")
             result.headers.append("set-cookie", cookie_prefix + name + "=" + cookie_value +
-                                  "; Path=" + prefix + "/; Secure; HttpOnly; SameSite=Lax" +
+                                  "; Path=" + prefix + "/; Secure; " + same_site +
+                                  ("; HttpOnly" if http_only else "") +
                                   ("; " + "; ".join(expires) if expires else ""))
         return result
     return router
