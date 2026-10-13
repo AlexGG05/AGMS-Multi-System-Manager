@@ -102,7 +102,7 @@ def router(connect, require, csrf, serializer, secure, origin):
         return url
     def validate_display_name(value):
         name=str(value or "").strip()
-        if not 3<=len(name)<=32 or not re.fullmatch(r"[\\w .-]+",name,re.UNICODE):
+        if not 3<=len(name)<=32 or not re.fullmatch(r"[\w .-]+",name,re.UNICODE):
             raise HTTPException(400,"Benutzername: 3–32 Zeichen (Buchstaben, Zahlen, Leerzeichen, Punkt, Bindestrich)")
         return name
     def validate_avatar(value):
@@ -112,7 +112,7 @@ def router(connect, require, csrf, serializer, secure, origin):
         if not m:raise HTTPException(400,"Nur PNG, JPEG oder WebP erlaubt")
         try: raw=base64.b64decode(m.group(2),validate=True)
         except (binascii.Error,ValueError):raise HTTPException(400,"Ungültiges Bild")
-        valid=(m.group(1)=="png" and raw.startswith(b"\\x89PNG\\r\\n\\x1a\\n")) or (m.group(1)=="jpeg" and raw.startswith(b"\\xff\\xd8\\xff")) or (m.group(1)=="webp" and raw.startswith(b"RIFF") and raw[8:12]==b"WEBP")
+        valid=(m.group(1)=="png" and raw.startswith(b"\x89PNG\r\n\x1a\n")) or (m.group(1)=="jpeg" and raw.startswith(b"\xff\xd8\xff")) or (m.group(1)=="webp" and raw.startswith(b"RIFF") and raw[8:12]==b"WEBP")
         if not valid or len(raw)>160000:raise HTTPException(400,"Ungültiges oder zu großes Bild")
         return value
     @api.get("/api/account/profile")
@@ -176,6 +176,7 @@ def router(connect, require, csrf, serializer, secure, origin):
         body=await request.json()
         email=str(body.get("email","")).strip().lower()
         password=str(body.get("password",""))
+        display_name=validate_display_name(body.get("display_name") or email.split("@")[0][:32])
         if not EMAIL.fullmatch(email) or len(password)<16 or len(password)>128: raise HTTPException(400,"Valid email and password of 16–128 characters required")
         hashed=bcrypt.hashpw(password.encode(),bcrypt.gensalt()).decode()
         with connect() as db:
@@ -296,7 +297,7 @@ def router(connect, require, csrf, serializer, secure, origin):
                     path=target.path or "/"
                     if target.query:path+="?"+target.query
                     host_header=hostname if port in (80,443) else hostname+":"+str(port)
-                    request_line="HEAD "+path+" HTTP/1.1\\r\\nHost: "+host_header+"\\r\\nConnection: close\\r\\nUser-Agent: AGMS-Status/1.0\\r\\n\\r\\n"
+                    request_line="HEAD "+path+" HTTP/1.1\r\nHost: "+host_header+"\r\nConnection: close\r\nUser-Agent: AGMS-Status/1.0\r\n\r\n"
                     sock.sendall(request_line.encode("utf-8"))
                     response=sock.recv(256)
                     if response.startswith(b"HTTP/"):return {"status":"online"}
