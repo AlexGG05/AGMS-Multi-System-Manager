@@ -320,7 +320,8 @@ def router(connect, require, csrf, serializer, secure, origin):
             parent=item.get("parent_id");parent=str(parent) if parent else None
             min_role=str(item.get("min_role","viewer"))
             open_mode=str(item.get("open_mode","embed"))
-            if open_mode not in ("embed","external"): raise HTTPException(400,"Invalid open mode")
+            if open_mode not in ("embed","external","bookstack_proxy"): raise HTTPException(400,"Invalid open mode")
+            if open_mode=="bookstack_proxy" and str(item.get("url","")).rstrip("/")!="https://book.agrosskopf.de": raise HTTPException(400,"BookStack Proxy ist nur für book.agrosskopf.de erlaubt")
             favorite=1 if item.get("favorite") else 0
             color=str(item.get("color") or "")
             if color and not re.fullmatch(r"#[0-9a-fA-F]{6}",color): raise HTTPException(400,"Invalid color")
