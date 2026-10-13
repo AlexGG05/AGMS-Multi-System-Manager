@@ -46,13 +46,13 @@ def install(db):
     CREATE INDEX IF NOT EXISTS idx_nav_workspace ON workspace_navigation(workspace_id,position);
     """)
     db.execute("CREATE TABLE IF NOT EXISTS proxy_allowed_origins (origin TEXT PRIMARY KEY, approved_by TEXT NOT NULL, created_at INTEGER NOT NULL DEFAULT (unixepoch()))")
-    # Migrate legacy BookStack opening mode without deleting or recreating WebUIs.
-    db.execute("UPDATE workspace_navigation SET open_mode='proxy' WHERE open_mode='bookstack_proxy' AND url IN ('https://book.agrosskopf.de','https://book.agrosskopf.de/')")
-    db.execute("INSERT OR IGNORE INTO proxy_allowed_origins(origin,approved_by) VALUES('https://book.agrosskopf.de',?)",(os.getenv("ADMIN_USERNAME","admin"),))
     db.execute("CREATE TABLE IF NOT EXISTS proxy_requests (origin TEXT PRIMARY KEY, requested_by TEXT NOT NULL, created_at INTEGER NOT NULL DEFAULT (unixepoch()), status TEXT NOT NULL DEFAULT 'pending')")
     columns={row[1] for row in db.execute("PRAGMA table_info(workspace_navigation)").fetchall()}
     if "open_mode" not in columns:
         db.execute("ALTER TABLE workspace_navigation ADD COLUMN open_mode TEXT NOT NULL DEFAULT 'embed'")
+    # Migrate legacy BookStack opening mode without deleting or recreating WebUIs.
+    db.execute("UPDATE workspace_navigation SET open_mode='proxy' WHERE open_mode='bookstack_proxy' AND url IN ('https://book.agrosskopf.de','https://book.agrosskopf.de/')")
+    db.execute("INSERT OR IGNORE INTO proxy_allowed_origins(origin,approved_by) VALUES('https://book.agrosskopf.de',?)",(os.getenv("ADMIN_USERNAME","admin"),))
     for column,definition in (("favorite","INTEGER NOT NULL DEFAULT 0"),("color","TEXT NOT NULL DEFAULT ''"),("icon_url","TEXT NOT NULL DEFAULT ''")):
         if column not in {row[1] for row in db.execute("PRAGMA table_info(workspace_navigation)").fetchall()}:
             db.execute("ALTER TABLE workspace_navigation ADD COLUMN "+column+" "+definition)
