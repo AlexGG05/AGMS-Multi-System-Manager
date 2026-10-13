@@ -56,6 +56,9 @@ function decorate(){
 }
 renderNav=function(){origRenderNav();for(const b of $('groupNav').children){const name=b.textContent.replace(/^▤\s*/, '');const item=items.find(n=>!n.url&&n.title===name);if(item?.color)b.style.borderLeft='3px solid '+item.color}};
 showHome=function(){origShowHome();decorate()};
+// Core UI bound this click handler before enhancements replaced showHome.
+// Rebind so Overview renders the same favorites as the AGMS home entry.
+$('showHome').onclick=()=>showHome();
 showGroup=function(id){origShowGroup(id);decorate()};
 openWorkspace=async function(id){await origOpenWorkspace(id);view.value=getStore(key(),'tiles');decorate()};
 search.addEventListener('input',()=>{if(workspace)decorate()});
