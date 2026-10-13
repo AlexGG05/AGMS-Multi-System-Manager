@@ -39,7 +39,7 @@ def rewrite_location(location, upstream, prefix):
 def rewrite_markup(text, upstream, prefix):
     text = text.replace(upstream + "/", prefix + "/")
     text = re.sub(r'(?i)(\\b(?:href|src|action|poster)=)(["\\\'])(/[^"\\\']*)(\\2)',
-                  lambda m: m.group(1) + m.group(2) + prefix + m.group(3) + m.group(4), text)
+                  lambda m: m.group(0) if m.group(3).startswith(prefix + "/") else m.group(1) + m.group(2) + prefix + m.group(3) + m.group(4), text)
     return text
 
 def setup(connect, require):
