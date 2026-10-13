@@ -1,4 +1,4 @@
-"""Opt-in, fixed-origin BookStack proxy experiment for authenticated AGMS administrators."""
+"""Opt-in, fixed-origin BookStack proxy for authenticated AGMS users."""
 import os
 import re
 from urllib.parse import urlsplit
@@ -34,8 +34,6 @@ async def proxy(request: Request, path: str):
         raise HTTPException(404, "BookStack test proxy disabled")
     if not getattr(request.state, "agms_user", None):
         raise HTTPException(401, "Login required")
-    if request.state.agms_user != os.getenv("ADMIN_USERNAME", "admin"):
-        raise HTTPException(403, "BookStack proxy test is administrator-only")
     if request.method not in ("GET", "HEAD"):
         origin = request.headers.get("origin", "")
         referer = request.headers.get("referer", "")
