@@ -1,0 +1,17 @@
+{
+  "name": "AGMS – agrosskopf Multi System Manager",
+  "short_name": "AGMS",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0d1625",
+  "theme_color": "#0d1625",
+  "icons": [
+    {
+      "src": "/static/agms-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
