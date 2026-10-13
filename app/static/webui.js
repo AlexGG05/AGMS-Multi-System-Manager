@@ -42,8 +42,8 @@ function drawEditor(){
   const card=document.createElement('div');card.className='web-config-card';
   const header=document.createElement('strong');header.textContent=item.url?'◈ '+item.title:'▤ '+item.title;card.append(header);
   card.append(field('Name',item.title,v=>item.title=v));
-  card.append(field('Icon / Emoji',item.icon||'◈',v=>item.icon=v));
-  card.append(field('Logo-Bildadresse (HTTPS, PNG / SVG / WebP)',item.icon_url||'',v=>item.icon_url=v.trim(),'url'));
+  card.append(field('Icon: Emoji oder HTTPS-Bildadresse',item.icon_url||item.icon||'◈',v=>{const value=v.trim();if(/^https?:\/\//i.test(value)){item.icon_url=value}else{item.icon=value;item.icon_url=''};}));
+  const help=document.createElement('small');help.textContent='Beispiel: 🖥️ oder https://example.com/logo.png (auch SVG/WebP).';help.className='web-hint';card.append(help);
   const colorLabel=document.createElement('label');colorLabel.className='web-config-field';colorLabel.textContent='Kachelfarbe';const colorInput=document.createElement('input');colorInput.type='color';colorInput.value=/^#[0-9a-f]{6}$/i.test(item.color||'')?item.color:'#243b5a';colorInput.oninput=()=>item.color=colorInput.value;colorLabel.append(colorInput);card.append(colorLabel);
   const favoriteLabel=document.createElement('label');favoriteLabel.className='web-config-check';const favoriteInput=document.createElement('input');favoriteInput.type='checkbox';favoriteInput.checked=!!item.favorite;favoriteInput.onchange=()=>item.favorite=favoriteInput.checked;favoriteLabel.append(favoriteInput,document.createTextNode(' Als Favorit anzeigen'));card.append(favoriteLabel);
   if(item.url){
