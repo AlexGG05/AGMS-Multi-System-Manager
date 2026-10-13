@@ -52,6 +52,7 @@ function drawEditor(){
    select.value=item.open_mode||'embed';select.onchange=()=>item.open_mode=select.value;label.append(cap,select);card.append(label);
   }
   const actions=document.createElement('div');actions.className='web-config-actions';
+  for(const [direction,label] of [[-1,'↑'],[1,'↓']])actions.append(action(label,()=>{const siblings=items.filter(n=>n.parent_id===item.parent_id);const at=siblings.findIndex(n=>n.id===item.id);const target=siblings[at+direction];if(!target)return;const from=items.indexOf(item),to=items.indexOf(target);[items[from],items[to]]=[items[to],items[from]];drawEditor()}));
   actions.append(action('Löschen',()=>{if(!confirm('„'+item.title+'“ wirklich löschen?'+(!item.url?' Alle WebUIs dieser Gruppe werden ebenfalls entfernt.':'')))return;items=items.filter(n=>n.id!==item.id&&n.parent_id!==item.id);if(selectedGroup===item.id)selectedGroup=null;drawEditor()}));
   if(item.url)actions.prepend(action('Duplizieren',()=>{items.push({...item,id:crypto.randomUUID(),title:item.title+' (Kopie)'});drawEditor()}));
   card.append(actions);return card;
@@ -70,7 +71,7 @@ function drawEditor(){
    const line=document.createElement('div');line.className='web-group-config';
    const name=document.createElement('strong');name.textContent='▤ '+group.title;
    const count=document.createElement('span');count.textContent=items.filter(n=>n.parent_id===group.id).length+' WebUIs';
-   line.append(name,count,action('Verwalten →',()=>{selectedGroup=group.id;drawEditor()}));root.append(line);
+   line.append(name,count,action('Verwalten →',()=>{selectedGroup=group.id;drawEditor()}),action('↑',()=>{const index=items.indexOf(group);const previous=items.slice(0,index).reverse().find(n=>!n.url);if(previous){const at=items.indexOf(previous);[items[at],items[index]]=[items[index],items[at]];drawEditor()}}),action('↓',()=>{const index=items.indexOf(group);const next=items.slice(index+1).find(n=>!n.url);if(next){const at=items.indexOf(next);[items[at],items[index]]=[items[index],items[at]];drawEditor()}}));root.append(line);
   }
   const ungrouped=items.filter(n=>n.url&&!n.parent_id);
   if(ungrouped.length){const h=document.createElement('h3');h.textContent='Ohne Gruppe';root.append(h);for(const item of ungrouped)root.append(rowFor(item))}
