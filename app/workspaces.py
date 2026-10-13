@@ -52,7 +52,6 @@ def install(db):
         db.execute("ALTER TABLE workspace_navigation ADD COLUMN open_mode TEXT NOT NULL DEFAULT 'embed'")
     # Migrate legacy BookStack opening mode without deleting or recreating WebUIs.
     db.execute("UPDATE workspace_navigation SET open_mode='proxy' WHERE open_mode='bookstack_proxy' AND url IN ('https://book.agrosskopf.de','https://book.agrosskopf.de/')")
-    db.execute("INSERT OR IGNORE INTO proxy_allowed_origins(origin,approved_by) VALUES('https://book.agrosskopf.de',?)",(os.getenv("ADMIN_USERNAME","admin"),))
     for column,definition in (("favorite","INTEGER NOT NULL DEFAULT 0"),("color","TEXT NOT NULL DEFAULT ''"),("icon_url","TEXT NOT NULL DEFAULT ''")):
         if column not in {row[1] for row in db.execute("PRAGMA table_info(workspace_navigation)").fetchall()}:
             db.execute("ALTER TABLE workspace_navigation ADD COLUMN "+column+" "+definition)
@@ -464,6 +463,25 @@ def router(connect, require, csrf, serializer, secure, origin):
             db.execute("INSERT INTO workspace_notifications(id,username,workspace_id,message) VALUES(?,?,?,?)",
                        (secrets.token_hex(12),row["requested_by"],None,
                         "Proxy-Anfrage "+("freigegeben: " if decision=="approved" else "abgelehnt: ")+origin))
+        return {"ok":True}
+    @api.delete("/api/admin/proxy-requests")
+    async def delete_proxy_request(request:Request):
+        username=identity(request);csrf(request)
+        if username!=os.getenv("ADMIN_USERNAME","admin"): raise HTTPException(403,"Admin only")
+        body=await request.json()
+        origin=str(body.get("origin","")).strip().lower()
+        parsed=urlparse(origin)
+        if parsed.scheme!="https" or not parsed.netloc or parsed.path not in ("","/") or parsed.query or parsed.fragment:
+            raise HTTPException(400,"Invalid origin")
+        with connect() as db:
+            row=db.execute("SELECT requested_by,status FROM proxy_requests WHERE origin=?",(origin,)).fetchone()
+            approved=db.execute("SELECT 1 FROM proxy_allowed_origins WHERE origin=?",(origin,)).fetchone()
+            if not row and not approved: raise HTTPException(404,"Proxy origin not found")
+            db.execute("DELETE FROM proxy_allowed_origins WHERE origin=?",(origin,))
+            db.execute("DELETE FROM proxy_requests WHERE origin=?",(origin,))
+            if row and row["status"]=="approved":
+                db.execute("INSERT INTO workspace_notifications(id,username,workspace_id,message) VALUES(?,?,?,?)",
+                           (secrets.token_hex(12),row["requested_by"],None,"Proxy-Freigabe widerrufen: "+origin))
         return {"ok":True}
     @api.get("/api/admin/accounts")
     def accounts(request:Request):
