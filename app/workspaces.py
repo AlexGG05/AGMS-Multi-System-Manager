@@ -111,7 +111,8 @@ def router(connect, require, csrf, serializer, secure, origin):
             ensure_default(db,username)
             rows=db.execute("SELECT w.id,w.name,m.role FROM workspaces w JOIN workspace_members m ON w.id=m.workspace_id WHERE m.username=? ORDER BY w.created_at,w.name",(username,)).fetchall()
             profile=db.execute("SELECT role FROM account_profiles WHERE username=?",(username,)).fetchone()
-        return {"workspaces":[dict(x) for x in rows],"account_role":profile["role"] if profile else "user"}
+            security=db.execute("SELECT tier FROM account_security WHERE username=?",(username,)).fetchone()
+        return {"workspaces":[dict(x) for x in rows],"account_role":profile["role"] if profile else "user","tier":int(security["tier"]) if security else 0}
     @api.post("/api/workspaces")
     async def create_workspace(request:Request):
         username=identity(request);csrf(request)
