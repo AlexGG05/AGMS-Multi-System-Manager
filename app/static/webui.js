@@ -42,6 +42,9 @@ function drawEditor(){
   const card=document.createElement('div');card.className='web-config-card';
   const header=document.createElement('strong');header.textContent=item.url?'◈ '+item.title:'▤ '+item.title;card.append(header);
   card.append(field('Name',item.title,v=>item.title=v));
+  card.append(field('Icon / Emoji',item.icon||'◈',v=>item.icon=v));
+  const colorLabel=document.createElement('label');colorLabel.className='web-config-field';colorLabel.textContent='Kachelfarbe';const colorInput=document.createElement('input');colorInput.type='color';colorInput.value=/^#[0-9a-f]{6}$/i.test(item.color||'')?item.color:'#243b5a';colorInput.oninput=()=>item.color=colorInput.value;colorLabel.append(colorInput);card.append(colorLabel);
+  const favoriteLabel=document.createElement('label');favoriteLabel.className='web-config-check';const favoriteInput=document.createElement('input');favoriteInput.type='checkbox';favoriteInput.checked=!!item.favorite;favoriteInput.onchange=()=>item.favorite=favoriteInput.checked;favoriteLabel.append(favoriteInput,document.createTextNode(' Als Favorit anzeigen'));card.append(favoriteLabel);
   if(item.url){
    card.append(field('WebUI-Adresse',item.url,v=>item.url=v,'url'));
    const label=document.createElement('label');label.className='web-config-field';const cap=document.createElement('span');cap.textContent='Öffnungsmodus';const select=document.createElement('select');
@@ -50,9 +53,11 @@ function drawEditor(){
   }
   const actions=document.createElement('div');actions.className='web-config-actions';
   actions.append(action('Löschen',()=>{if(!confirm('„'+item.title+'“ wirklich löschen?'+(!item.url?' Alle WebUIs dieser Gruppe werden ebenfalls entfernt.':'')))return;items=items.filter(n=>n.id!==item.id&&n.parent_id!==item.id);if(selectedGroup===item.id)selectedGroup=null;drawEditor()}));
+  if(item.url)actions.prepend(action('Duplizieren',()=>{items.push({...item,id:crypto.randomUUID(),title:item.title+' (Kopie)'});drawEditor()}));
   card.append(actions);return card;
  }
  if(selectedGroup){
+  root.append(action('Gruppe duplizieren',()=>{const original=groups.find(g=>g.id===selectedGroup);if(!original)return;const copyId=crypto.randomUUID();items.push({...original,id:copyId,title:original.title+' (Kopie)'});for(const child of items.filter(n=>n.parent_id===original.id))items.push({...child,id:crypto.randomUUID(),parent_id:copyId});selectedGroup=copyId;drawEditor()}));
   const group=groups.find(g=>g.id===selectedGroup);
   if(group)root.append(rowFor(group));
   const subtitle=document.createElement('h3');subtitle.textContent='WebUIs in dieser Gruppe';root.append(subtitle);
