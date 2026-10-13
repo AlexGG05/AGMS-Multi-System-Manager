@@ -2,12 +2,12 @@ const $=id=>document.getElementById(id);
 const csrf=()=>decodeURIComponent((document.cookie.match(/(?:^|; )csrf=([^;]*)/)||[])[1]||'');
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 async function api(path,method='GET',body){const r=await fetch(path,{method,credentials:'same-origin',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf()},body:body===undefined?undefined:JSON.stringify(body)});const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.detail||'HTTP '+r.status);return d}
-let workspaces=[],workspace=null,items=[],role='viewer',tier=0,selectedGroup=null,editing=false;
+let workspaces=[],workspace=null,items=[],role='viewer',tier=0,selectedGroup=null,editing=false,workspaceLocked=false;
 const notify=message=>$('notice').textContent=message;
 function panels(id){if(id!=='framePanel')setFrameExpanded(false);for(const key of ['homePanel','framePanel','editorPanel','teamPanel'])$(key).hidden=key!==id}
 function maxHomes(){return tier===3?10:tier===2?5:tier===1?3:1}
 async function init(){try{const data=await api('/api/workspaces');workspaces=data.workspaces;tier=data.tier;$('tierLabel').textContent=data.account_role==='admin'?'Administrator':tier?'Tier '+tier:'Free · 1 Homepage';$('premiumLink').hidden=data.account_role!=='admin';$('workspaceSelect').replaceChildren(...workspaces.map(w=>{const option=document.createElement('option');option.value=w.id;option.textContent=w.name;return option}));if(!workspaces.length){notify('Erstelle deine erste Homepage.');panels('homePanel');return}const stored=localStorage.getItem('codex-active-homepage');await openWorkspace(workspaces.find(w=>w.id===stored)?.id||workspaces[0].id);await showNotifications()}catch(e){notify(e.message)}}
-async function openWorkspace(id){try{const d=await api('/api/workspaces/'+id);workspace=d.workspace;role=d.role;items=d.navigation;editing=false;selectedGroup=null;localStorage.setItem('codex-active-homepage',id);$('workspaceSelect').value=id;$('pageTitle').textContent=workspace.name;$('deleteWorkspace').disabled=role!=='owner';$('renameWorkspace').disabled=role!=='owner';$('editButton').hidden=role==='viewer';$('addGroup').hidden=role==='viewer';$('addWebui').hidden=role==='viewer';$('invite').hidden=role!=='owner';notify('');renderNav();showHome()}catch(e){notify(e.message)}}
+async function openWorkspace(id){try{const d=await api('/api/workspaces/'+id);workspace=d.workspace;role=d.role;workspaceLocked=d.editable===false;items=d.navigation;editing=false;selectedGroup=null;localStorage.setItem('codex-active-homepage',id);$('workspaceSelect').value=id;$('pageTitle').textContent=workspace.name;$('deleteWorkspace').disabled=role!=='owner';$('renameWorkspace').disabled=role!=='owner'||workspaceLocked;$('editButton').hidden=role==='viewer'||workspaceLocked;$('addGroup').hidden=role==='viewer'||workspaceLocked;$('addWebui').hidden=role==='viewer'||workspaceLocked;$('invite').hidden=role!=='owner'||workspaceLocked;notify(workspaceLocked?'Nur Lesen: Diese Homepage liegt über dem Limit deines aktuellen Tiers. Die Inhalte bleiben verfügbar.':'');renderNav();showHome()}catch(e){notify(e.message)}}
 let frameOriginalParent=null,frameOriginalNext=null;
 function setFrameExpanded(expanded){if(typeof window.agmsSetFrameMode==='function'){window.agmsSetFrameMode(expanded);return;}
  const panel=$('framePanel'),button=$('expandFrame');
@@ -30,7 +30,7 @@ function tile(item){const b=document.createElement('button');b.className='web-ti
 function showHome(){selectedGroup=null;$('breadcrumb').textContent='ÜBERSICHT';$('pageTitle').textContent=workspace?.name||'Meine Homepage';$('tiles').replaceChildren(...items.filter(n=>!n.parent_id).map(tile));if(!$('tiles').children.length){const p=document.createElement('p');p.textContent='Noch keine Weboberflächen. Über „WebUI hinzufügen“ kannst du deinen ersten Dienst anlegen.';$('tiles').append(p)}panels('homePanel')}
 function showGroup(id){selectedGroup=id;const group=items.find(n=>n.id===id&&!n.url);if(!group)return showHome();$('breadcrumb').textContent=workspace.name;$('pageTitle').textContent=group.title;$('tiles').replaceChildren(...items.filter(n=>n.parent_id===id).map(tile));panels('homePanel')}
 function openFrame(item){if(!item.url)return;if(item.open_mode==='external'){window.open(item.url,'_blank','noopener,noreferrer');return}try{const u=new URL(item.url);if(!['http:','https:'].includes(u.protocol))throw Error('URL');$('webFrame').src=u.href;$('external').href=u.href;$('frameTitle').textContent=item.title;$('breadcrumb').textContent=workspace.name+' / WEBUI';$('pageTitle').textContent=item.title;panels('framePanel')}catch{notify('Ungültige WebUI-Adresse')}}
-function edit(){if(role==='viewer')return;editing=true;panels('editorPanel');drawEditor()}
+function edit(){if(role==='viewer'||workspaceLocked)return;editing=true;panels('editorPanel');drawEditor()}
 function drawEditor(){
  const root=$('editorItems');root.replaceChildren();
  const groups=items.filter(n=>!n.url);
@@ -80,7 +80,7 @@ function drawEditor(){
  }
 }
 function addItem(group){
- if(role==='viewer')return;
+ if(role==='viewer'||workspaceLocked)return;
  if(!editing){editing=true;panels('editorPanel')}
  const name=prompt(group?'Name der neuen Gruppe':'Name der neuen WebUI');
  if(!name?.trim())return;
@@ -97,6 +97,7 @@ function addItem(group){
  drawEditor();
 }
 async function save(){
+ if(workspaceLocked)return notify('Diese Homepage ist schreibgeschützt.');
  try{
   await api('/api/workspaces/'+workspace.id+'/navigation','PUT',{items});
   const returnGroup=selectedGroup;
