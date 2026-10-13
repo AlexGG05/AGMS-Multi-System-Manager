@@ -41,13 +41,18 @@ def rewrite_location(location, upstream, prefix):
     return location
 
 def rewrite_markup(text, upstream, prefix):
-    # Keep root-relative resources and forms inside the per-WebUI proxy.
+    # Rewrite root-relative links with or without attribute quotes.
     text = text.replace(upstream + "/", prefix + "/")
-    text = re.sub(r'''(?i)(\b(?:href|src|action|poster)=)(["'])(/[^"']*)(\2)''',
+    text = re.sub(r'''(?i)(\b(?:href|src|action|poster)\s*=\s*)(["'])(/[^"']*)(\2)''',
                   lambda m: m.group(0) if m.group(3).startswith(prefix + "/") else m.group(1) + m.group(2) + prefix + m.group(3) + m.group(4), text)
+    text = re.sub(r'''(?i)(\b(?:href|src|action|poster)\s*=\s*)(/[^>\s"']+)''',
+                  lambda m: m.group(0) if m.group(2).startswith(prefix + "/") else m.group(1) + prefix + m.group(2), text)
     text = re.sub(r'''(?i)url\(\s*(["']?)(/[^)'"]+)\1\s*\)''',
                   lambda m: "url(" + m.group(1) + prefix + m.group(2) + m.group(1) + ")"
                   if not m.group(2).startswith(prefix + "/") else m.group(0), text)
+    # Angular and other SPAs often use relative bundles from <base href="/">.
+    text = re.sub(r'''(?i)(<base\b[^>]*\bhref\s*=\s*)(["'])/(\2)''',
+                  lambda m: m.group(1) + m.group(2) + prefix + "/" + m.group(3), text)
     return text
 
 def setup(connect, require):
