@@ -59,8 +59,8 @@ def setup(connect, require):
         origin = urlunsplit((base.scheme, base.netloc, "", "", "")).lower()
         with connect() as db:
             approved = db.execute("SELECT 1 FROM proxy_allowed_origins WHERE origin=?", (origin,)).fetchone()
-        if (not approved and origin not in allowed_origins()) or base.scheme != "https" or base.username or base.password
-                or base.path not in ("", "/") or base.query or base.fragment:
+        if ((not approved and origin not in allowed_origins()) or base.scheme != "https" or base.username or base.password
+                or base.path not in ("", "/") or base.query or base.fragment):
             raise HTTPException(403, "Proxy origin not allowed or URL contains a path")
         # Refuse localhost/private/link-local destinations even if an admin accidentally approves them.
         try:
