@@ -196,7 +196,7 @@ def setup(connect, require):
             http_only = any(a.lower() == "httponly" for a in attrs)
             same_site = next((a for a in attrs if a.lower().startswith("samesite=")), "SameSite=Lax")
             result.headers.append("set-cookie", cookie_prefix + name + "=" + cookie_value +
-                                  "; Path=" + prefix + "/; Secure; " + same_site +
+                                  "; Path=" + prefix + "; Secure; " + same_site +
                                   ("; HttpOnly" if http_only else "") +
                                   ("; " + "; ".join(expires) if expires else ""))
         return result
