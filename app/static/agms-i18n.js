@@ -69,6 +69,31 @@ const placeholders={
 'Adresse, Antragsteller oder Status suchen …':'Search address, requester or status …',
 'Name der neuen Homepage':'Name of the new homepage'
 };
+Object.assign(translations,{
+'Bitte bestätige deine E-Mail-Adresse über den Link in deinem Postfach.':'Please confirm your email using the link in your inbox.',
+'Registrierung fehlgeschlagen':'Registration failed',
+'Erfolgreich. Bitte bei Bedarf anmelden.':'Success. Please sign in if needed.',
+'Verbindung fehlgeschlagen':'Connection failed','Fehler':'Error',
+'Einladung angenommen. Homepage ist jetzt verfügbar.':'Invitation accepted. The homepage is now available.',
+'Bitte zuerst anmelden.':'Please sign in first.',
+'Neue E-Mail-Adresse bestätigt. Ab sofort damit anmelden.':'New email address confirmed. You can now sign in with it.',
+'Nur für Administratoren':'Administrators only',
+'Proxy-Freigaben konnten nicht geladen werden':'Could not load proxy approvals',
+'Benutzerverwaltung nur für Administratoren verfügbar':'User administration is only available to administrators',
+'Bitte einen Ablehnungsgrund eingeben.':'Please enter a rejection reason.',
+'Maximal 1000 Zeichen erlaubt.':'Maximum 1000 characters.',
+'Tier gespeichert':'Tier saved',
+'Änderung fehlgeschlagen':'Update failed',
+'Benutzer gelöscht':'User deleted',
+'Entfernen fehlgeschlagen':'Removal failed',
+'Proxy-Eintrag entfernt':'Proxy entry removed',
+'Noch keine Benachrichtigungen':'No notifications',
+'Keine Benachrichtigungen':'No notifications',
+'Als gelesen markieren':'Mark as read',
+'Weboberfläche':'Web interface','Gruppe öffnen':'Open group',
+'Nicht prüfbar':'Cannot check',
+'Export JSON':'Export JSON','Import JSON':'Import JSON'
+});
 const reverse=Object.fromEntries(Object.entries(translations).map(([de,en])=>[en,de]));
 const placeholderReverse=Object.fromEntries(Object.entries(placeholders).map(([de,en])=>[en,de]));
 const readLanguage=()=>{try{return localStorage.getItem('agms-language')==='de'?'de':'en'}catch{return'en'}};
