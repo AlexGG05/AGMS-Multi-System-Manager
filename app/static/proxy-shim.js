@@ -28,6 +28,23 @@
   XMLHttpRequest.prototype.open = function(method, url, ...rest) {
     return xhrOpen.call(this, method, rewrite(String(url)), ...rest);
   };
+  const NativeWebSocket = window.WebSocket;
+  window.WebSocket = class ProxiedWebSocket extends NativeWebSocket {
+    constructor(url, protocols) {
+      let target = String(url);
+      try {
+        const u = new URL(target, window.location.href);
+        if (u.hostname === window.location.hostname || (upstream && u.hostname === new URL(upstream).hostname)) {
+          if (!u.pathname.startsWith(prefix + '/')) u.pathname = prefix + u.pathname;
+          u.protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+          u.host = window.location.host;
+          target = u.toString();
+        }
+      } catch (_) {}
+      if (protocols === undefined) super(target);
+      else super(target, protocols);
+    }
+  };
   // Cookie names are namespaced server-side to prevent collisions between apps.
   // Expose the upstream names to JavaScript-based CSRF clients.
   try {
