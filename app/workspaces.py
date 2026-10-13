@@ -45,6 +45,7 @@ def install(db):
     CREATE INDEX IF NOT EXISTS idx_members_username ON workspace_members(username);
     CREATE INDEX IF NOT EXISTS idx_nav_workspace ON workspace_navigation(workspace_id,position);
     """)
+    db.execute("CREATE TABLE IF NOT EXISTS proxy_allowed_origins (origin TEXT PRIMARY KEY, approved_by TEXT NOT NULL, created_at INTEGER NOT NULL DEFAULT (unixepoch()))")
     columns={row[1] for row in db.execute("PRAGMA table_info(workspace_navigation)").fetchall()}
     if "open_mode" not in columns:
         db.execute("ALTER TABLE workspace_navigation ADD COLUMN open_mode TEXT NOT NULL DEFAULT 'embed'")
@@ -244,6 +245,20 @@ def router(connect, require, csrf, serializer, secure, origin):
         with connect() as db:
             membership(db,wsid,username,owner=True)
             db.execute("DELETE FROM workspace_invitations WHERE workspace_id=?",(wsid,))
+            # New proxy targets can only be approved by the internal AGMS administrator.
+            proxy_origins=set()
+            for row in cleaned:
+                if row[8]=="proxy":
+                    parsed=urlparse(row[5])
+                    proxy_origins.add(f"{parsed.scheme}://{parsed.netloc}".lower())
+            if proxy_origins:
+                existing={r["origin"] for r in db.execute("SELECT origin FROM proxy_allowed_origins").fetchall()}
+                env_allowed={v.strip().rstrip("/").lower() for v in os.getenv("AGMS_PROXY_ALLOWED_ORIGINS","").split(",") if v.strip()}
+                pending=proxy_origins-existing-env_allowed
+                if pending and username!=os.getenv("ADMIN_USERNAME","admin"):
+                    raise HTTPException(403,"Neue Proxy-Ziele müssen zuerst vom AGMS-Administrator freigegeben werden")
+                for origin in pending:
+                    db.execute("INSERT OR IGNORE INTO proxy_allowed_origins(origin,approved_by) VALUES(?,?)",(origin,username))
             db.execute("DELETE FROM workspace_navigation WHERE workspace_id=?",(wsid,))
             db.execute("DELETE FROM workspace_members WHERE workspace_id=?",(wsid,))
             db.execute("DELETE FROM workspaces WHERE id=? AND owner=?",(wsid,username))
