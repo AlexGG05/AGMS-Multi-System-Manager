@@ -10,7 +10,9 @@ import ipaddress
 from html import escape
 from urllib.parse import urlsplit, urlunsplit, urljoin
 import httpx
-from fastapi import APIRouter, Request, HTTPException
+import asyncio
+import websockets
+from fastapi import APIRouter, Request, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import Response
 
 router = APIRouter()
@@ -49,6 +51,66 @@ def rewrite_markup(text, upstream, prefix):
     return text
 
 def setup(connect, require):
+    @router.websocket("/web-proxy/{wsid}/{itemid}/{path:path}")
+    async def proxy_websocket(ws: WebSocket, wsid: str, itemid: str, path: str):
+        try:
+            username = require(ws)
+            with connect() as db:
+                member = db.execute("SELECT role FROM workspace_members WHERE workspace_id=? AND username=?", (wsid, username)).fetchone()
+                item = db.execute("SELECT url,min_role,open_mode FROM workspace_navigation WHERE workspace_id=? AND id=?", (wsid, itemid)).fetchone()
+                if not member or not item or item["open_mode"] != "proxy" or ROLE.get(member["role"], -1) < ROLE.get(item["min_role"], 99):
+                    await ws.close(code=1008)
+                    return
+                base = urlsplit(item["url"])
+                origin = urlunsplit((base.scheme, base.netloc, "", "", "")).lower()
+                approved = db.execute("SELECT 1 FROM proxy_allowed_origins WHERE origin=?", (origin,)).fetchone()
+            if (base.scheme != "https" or not base.hostname or base.username or base.password or
+                    base.path not in ("", "/") or base.query or base.fragment or
+                    (not approved and origin not in allowed_origins()) or ".." in path.split("/")):
+                await ws.close(code=1008)
+                return
+            addresses = await asyncio.to_thread(socket.getaddrinfo, base.hostname, base.port or 443, type=socket.SOCK_STREAM)
+            if not addresses or any(not ipaddress.ip_address(a[4][0]).is_global for a in addresses):
+                await ws.close(code=1008)
+                return
+            cookie_prefix = "agms_proxy_" + itemid + "_"
+            cookies = [k[len(cookie_prefix):] + "=" + v for k, v in ws.cookies.items() if k.startswith(cookie_prefix)]
+            headers = {"Cookie": "; ".join(cookies)} if cookies else {}
+            protocols = [p.strip() for p in ws.headers.get("sec-websocket-protocol", "").split(",") if p.strip()]
+            target = "wss://" + base.netloc + "/" + path
+            if ws.url.query:
+                target += "?" + ws.url.query
+            async with websockets.connect(target, extra_headers=headers, origin=origin,
+                                          subprotocols=protocols or None, open_timeout=12) as upstream:
+                await ws.accept(subprotocol=upstream.subprotocol)
+                async def browser_to_upstream():
+                    while True:
+                        msg = await ws.receive()
+                        if msg["type"] == "websocket.disconnect":
+                            break
+                        if msg.get("text") is not None:
+                            await upstream.send(msg["text"])
+                        elif msg.get("bytes") is not None:
+                            await upstream.send(msg["bytes"])
+                async def upstream_to_browser():
+                    async for msg in upstream:
+                        if isinstance(msg, bytes):
+                            await ws.send_bytes(msg)
+                        else:
+                            await ws.send_text(msg)
+                tasks = [asyncio.create_task(browser_to_upstream()), asyncio.create_task(upstream_to_browser())]
+                done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+                for task in pending:
+                    task.cancel()
+                await asyncio.gather(*pending, return_exceptions=True)
+        except (WebSocketDisconnect, OSError, websockets.exceptions.WebSocketException, asyncio.TimeoutError):
+            pass
+        finally:
+            try:
+                await ws.close()
+            except RuntimeError:
+                pass
+
     @router.api_route("/web-proxy/{wsid}/{itemid}", methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"])
     @router.api_route("/web-proxy/{wsid}/{itemid}/{path:path}", methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"])
     async def web_proxy(request: Request, wsid: str, itemid: str, path: str = ""):
