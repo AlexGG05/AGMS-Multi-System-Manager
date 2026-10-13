@@ -1,5 +1,5 @@
 """Multi-user workspace API. Existing login/session and legacy dashboard remain intact."""
-import os, re, json, time, secrets, hashlib, sqlite3, socket, ssl, ipaddress, asyncio
+import os, re, json, time, secrets, hashlib, sqlite3, socket, ssl, ipaddress, asyncio, base64, binascii
 from urllib.parse import urlparse
 import bcrypt
 from fastapi import APIRouter, Request, HTTPException
@@ -51,6 +51,13 @@ def install(db):
     for column,definition in (("favorite","INTEGER NOT NULL DEFAULT 0"),("color","TEXT NOT NULL DEFAULT ''"),("icon_url","TEXT NOT NULL DEFAULT ''")):
         if column not in {row[1] for row in db.execute("PRAGMA table_info(workspace_navigation)").fetchall()}:
             db.execute("ALTER TABLE workspace_navigation ADD COLUMN "+column+" "+definition)
+    profile_columns={row[1] for row in db.execute("PRAGMA table_info(account_profiles)").fetchall()}
+    for column,definition in (("display_name","TEXT NOT NULL DEFAULT ''"),("avatar","TEXT NOT NULL DEFAULT ''")):
+        if column not in profile_columns: db.execute("ALTER TABLE account_profiles ADD COLUMN "+column+" "+definition)
+    db.execute("""CREATE TABLE IF NOT EXISTS pending_email_changes(
+      username TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, token_hash TEXT NOT NULL UNIQUE,
+      expires_at INTEGER NOT NULL
+    )""")
     db.execute("INSERT OR IGNORE INTO account_security(username,verified_at,tier) SELECT username,unixepoch(),0 FROM users WHERE username=?", (os.getenv("ADMIN_USERNAME","admin"),))
     db.execute("INSERT OR IGNORE INTO account_profiles(username,email,role) SELECT username, CASE WHEN instr(username,'@')>0 THEN lower(username) ELSE NULL END, 'admin' FROM users WHERE username=?", (os.getenv("ADMIN_USERNAME","admin"),))
 
@@ -93,6 +100,71 @@ def router(connect, require, csrf, serializer, secure, origin):
         u=urlparse(url)
         if u.scheme not in ("http","https") or not u.hostname or u.username or u.password: raise HTTPException(400,"Invalid http(s) URL")
         return url
+    def validate_display_name(value):
+        name=str(value or "").strip()
+        if not 3<=len(name)<=32 or not re.fullmatch(r"[\\w .-]+",name,re.UNICODE):
+            raise HTTPException(400,"Benutzername: 3–32 Zeichen (Buchstaben, Zahlen, Leerzeichen, Punkt, Bindestrich)")
+        return name
+    def validate_avatar(value):
+        if not value:return ""
+        if not isinstance(value,str) or len(value)>230000: raise HTTPException(400,"Profilbild zu groß (max. ca. 150 KB)")
+        m=re.fullmatch(r"data:image/(png|jpeg|webp);base64,([A-Za-z0-9+/]+={0,2})",value)
+        if not m:raise HTTPException(400,"Nur PNG, JPEG oder WebP erlaubt")
+        try: raw=base64.b64decode(m.group(2),validate=True)
+        except (binascii.Error,ValueError):raise HTTPException(400,"Ungültiges Bild")
+        valid=(m.group(1)=="png" and raw.startswith(b"\\x89PNG\\r\\n\\x1a\\n")) or (m.group(1)=="jpeg" and raw.startswith(b"\\xff\\xd8\\xff")) or (m.group(1)=="webp" and raw.startswith(b"RIFF") and raw[8:12]==b"WEBP")
+        if not valid or len(raw)>160000:raise HTTPException(400,"Ungültiges oder zu großes Bild")
+        return value
+    @api.get("/api/account/profile")
+    def get_profile(request:Request):
+        username=identity(request)
+        with connect() as db:
+            p=db.execute("SELECT email,display_name,avatar FROM account_profiles WHERE username=?",(username,)).fetchone()
+            pending=db.execute("SELECT email FROM pending_email_changes WHERE username=? AND expires_at>?",(username,int(time.time()))).fetchone()
+        return {"email":p["email"] if p else None,"display_name":p["display_name"] if p else "","avatar":p["avatar"] if p else "","pending_email":pending["email"] if pending else None}
+    @api.put("/api/account/profile")
+    async def update_profile(request:Request):
+        username=identity(request);csrf(request)
+        body=await request.json()
+        name=validate_display_name(body.get("display_name"))
+        avatar=validate_avatar(body.get("avatar",""))
+        with connect() as db:
+            if db.execute("SELECT 1 FROM account_profiles WHERE lower(display_name)=lower(?) AND username!=?",(name,username)).fetchone():
+                raise HTTPException(409,"Benutzername bereits vergeben")
+            db.execute("UPDATE account_profiles SET display_name=?,avatar=? WHERE username=?",(name,avatar,username))
+        return {"ok":True}
+    @api.post("/api/account/change-email")
+    async def request_email_change(request:Request):
+        username=identity(request);csrf(request)
+        body=await request.json()
+        email=str(body.get("email","")).strip().lower()
+        password=str(body.get("password",""))
+        display_name=validate_display_name(body.get("display_name") or email.split("@")[0][:32])
+        if not EMAIL.fullmatch(email):raise HTTPException(400,"Ungültige E-Mail-Adresse")
+        with connect() as db:
+            row=db.execute("SELECT password_hash FROM users WHERE username=?",(username,)).fetchone()
+            profile=db.execute("SELECT email FROM account_profiles WHERE username=?",(username,)).fetchone()
+            if not row or not bcrypt.checkpw(password.encode(),row["password_hash"].encode()):raise HTTPException(403,"Passwort falsch")
+            if profile and profile["email"]==email:raise HTTPException(400,"E-Mail-Adresse ist bereits aktiv")
+            if db.execute("SELECT 1 FROM account_profiles WHERE email=? AND username!=?",(email,username)).fetchone():raise HTTPException(409,"E-Mail-Adresse bereits vergeben")
+            token=secrets.token_urlsafe(32)
+            db.execute("DELETE FROM pending_email_changes WHERE username=?",(username,))
+            db.execute("INSERT INTO pending_email_changes(username,email,token_hash,expires_at) VALUES(?,?,?,?)",(username,email,hashlib.sha256(token.encode()).hexdigest(),int(time.time())+3600))
+        send_email(email,"AGMS: Neue E-Mail-Adresse bestätigen","Bestätige deine neue E-Mail-Adresse (60 Minuten): "+origin+"/static/verify-email-change.html?token="+token)
+        return {"ok":True,"message":"Bestätigungslink an die neue E-Mail-Adresse versendet"}
+    @api.post("/api/account/confirm-email")
+    async def confirm_email_change(request:Request):
+        guard(request,"confirm-email",20)
+        body=await request.json()
+        digest=hashlib.sha256(str(body.get("token","")).encode()).hexdigest()
+        with connect() as db:
+            pending=db.execute("SELECT username,email FROM pending_email_changes WHERE token_hash=? AND expires_at>?",(digest,int(time.time()))).fetchone()
+            if not pending:raise HTTPException(400,"Link ungültig oder abgelaufen")
+            if db.execute("SELECT 1 FROM account_profiles WHERE email=? AND username!=?",(pending["email"],pending["username"])).fetchone():
+                raise HTTPException(409,"E-Mail-Adresse inzwischen vergeben")
+            db.execute("UPDATE account_profiles SET email=? WHERE username=?",(pending["email"],pending["username"]))
+            db.execute("DELETE FROM pending_email_changes WHERE username=?",(pending["username"],))
+        return {"ok":True}
     @api.post("/api/register")
     async def register(request:Request):
         if request.headers.get("origin","").rstrip("/")!=origin: raise HTTPException(403,"Origin mismatch")
@@ -109,7 +181,8 @@ def router(connect, require, csrf, serializer, secure, origin):
         with connect() as db:
             try:
                 db.execute("INSERT INTO users(username,password_hash) VALUES(?,?)",(email,hashed))
-                db.execute("INSERT INTO account_profiles(username,email,role) VALUES(?,?,'user')",(email,email))
+                if db.execute("SELECT 1 FROM account_profiles WHERE lower(display_name)=lower(?)",(display_name,)).fetchone(): raise HTTPException(409,"Benutzername bereits vergeben")
+                db.execute("INSERT INTO account_profiles(username,email,role,display_name) VALUES(?,?,'user',?)",(email,email,display_name))
                 db.execute("INSERT INTO account_security(username) VALUES(?)",(email,))
                 token=secrets.token_urlsafe(32)
                 db.execute("INSERT INTO account_tokens VALUES(?,?,?,?,NULL)",(hashlib.sha256(token.encode()).hexdigest(),email,"verify",int(time.time())+86400))
