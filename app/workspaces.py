@@ -187,7 +187,8 @@ def router(connect, require, csrf, serializer, secure, origin):
         target=urlparse(item["url"])
         if target.scheme not in ("http","https") or not target.hostname: return {"status":"unknown"}
         if target.username or target.password: return {"status":"unknown"}
-        port=target.port or (443 if target.scheme=="https" else 80)
+        try: port=target.port or (443 if target.scheme=="https" else 80)
+        except ValueError: return {"status":"unknown"}
         if port not in (80,443,8080,8443): return {"status":"unknown","reason":"port"}
         def check():
             try:
