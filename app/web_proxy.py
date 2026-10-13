@@ -5,11 +5,12 @@ guarantee that every third-party application's UI will function embedded.
 """
 import os
 import re
+import socket
+import ipaddress
 from urllib.parse import urlsplit, urlunsplit, urljoin
 import httpx
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import Response
-from . import bookstack_proxy
 
 router = APIRouter()
 HOP = {"host", "connection", "transfer-encoding", "content-length", "content-encoding",
@@ -56,9 +57,18 @@ def setup(connect, require):
             raise HTTPException(404, "WebUI not found")
         base = urlsplit(item["url"])
         origin = urlunsplit((base.scheme, base.netloc, "", "", "")).lower()
-        if (origin not in allowed_origins() or base.scheme != "https" or base.username or base.password
-                or base.path not in ("", "/") or base.query or base.fragment):
+        with connect() as db:
+            approved = db.execute("SELECT 1 FROM proxy_allowed_origins WHERE origin=?", (origin,)).fetchone()
+        if (not approved and origin not in allowed_origins()) or base.scheme != "https" or base.username or base.password
+                or base.path not in ("", "/") or base.query or base.fragment:
             raise HTTPException(403, "Proxy origin not allowed or URL contains a path")
+        # Refuse localhost/private/link-local destinations even if an admin accidentally approves them.
+        try:
+            addresses = socket.getaddrinfo(base.hostname, base.port or 443, type=socket.SOCK_STREAM)
+            if not addresses or any(not ipaddress.ip_address(a[4][0]).is_global for a in addresses):
+                raise HTTPException(403, "Private or non-public proxy destinations are blocked")
+        except socket.gaierror:
+            raise HTTPException(502, "Proxy hostname could not be resolved")
         if ".." in path.split("/") or "\\\\" in path:
             raise HTTPException(400, "Invalid path")
         prefix = f"/web-proxy/{wsid}/{itemid}"
