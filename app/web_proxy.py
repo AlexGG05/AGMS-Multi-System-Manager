@@ -38,12 +38,12 @@ def rewrite_location(location, upstream, prefix):
     return location
 
 def rewrite_markup(text, upstream, prefix):
-    # Root-relative links must remain inside this WebUI's own proxy namespace.
+    # Keep root-relative resources and forms inside the per-WebUI proxy.
     text = text.replace(upstream + "/", prefix + "/")
-    text = re.sub(r'(?i)(\\b(?:href|src|action|poster)=)(["\\\'])(/[^"\\\']*)(\\2)',
+    text = re.sub(r'''(?i)(\b(?:href|src|action|poster)=)(["'])(/[^"']*)(\2)''',
                   lambda m: m.group(0) if m.group(3).startswith(prefix + "/") else m.group(1) + m.group(2) + prefix + m.group(3) + m.group(4), text)
-    text = re.sub(r'(?i)url\\(\\s*(["\\\']?)(/[^)\\\'"]+)\\1\\s*\\)',
-                  lambda m: 'url(' + m.group(1) + prefix + m.group(2) + m.group(1) + ')'
+    text = re.sub(r'''(?i)url\(\s*(["']?)(/[^)'"]+)\1\s*\)''',
+                  lambda m: "url(" + m.group(1) + prefix + m.group(2) + m.group(1) + ")"
                   if not m.group(2).startswith(prefix + "/") else m.group(0), text)
     return text
 
