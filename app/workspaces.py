@@ -426,6 +426,30 @@ def router(connect, require, csrf, serializer, secure, origin):
             username=token_action(db,str(body.get("token","")),"reset")
             db.execute("UPDATE users SET password_hash=? WHERE username=?",(bcrypt.hashpw(password.encode(),bcrypt.gensalt()).decode(),username))
         return {"ok":True}
+    @api.get("/api/admin/proxy-requests")
+    def proxy_requests(request:Request):
+        if identity(request)!=os.getenv("ADMIN_USERNAME","admin"): raise HTTPException(403,"Admin only")
+        with connect() as db:
+            rows=db.execute("SELECT origin,requested_by,created_at,status FROM proxy_requests ORDER BY created_at DESC LIMIT 200").fetchall()
+        return {"requests":[dict(r) for r in rows]}
+    @api.post("/api/admin/proxy-requests/decision")
+    async def proxy_decision(request:Request):
+        username=identity(request);csrf(request)
+        if username!=os.getenv("ADMIN_USERNAME","admin"): raise HTTPException(403,"Admin only")
+        body=await request.json()
+        origin=str(body.get("origin","")).strip().lower()
+        decision=str(body.get("decision",""))
+        if decision not in ("approved","rejected"): raise HTTPException(400,"Invalid decision")
+        with connect() as db:
+            row=db.execute("SELECT requested_by,status FROM proxy_requests WHERE origin=?",(origin,)).fetchone()
+            if not row or row["status"]!="pending": raise HTTPException(404,"Pending request not found")
+            db.execute("UPDATE proxy_requests SET status=? WHERE origin=?",(decision,origin))
+            if decision=="approved":
+                db.execute("INSERT OR IGNORE INTO proxy_allowed_origins(origin,approved_by) VALUES(?,?)",(origin,username))
+            db.execute("INSERT INTO workspace_notifications(id,username,workspace_id,message) VALUES(?,?,?,?)",
+                       (secrets.token_hex(12),row["requested_by"],None,
+                        "Proxy-Anfrage "+("freigegeben: " if decision=="approved" else "abgelehnt: ")+origin))
+        return {"ok":True}
     @api.get("/api/admin/accounts")
     def accounts(request:Request):
         if identity(request)!=os.getenv("ADMIN_USERNAME","admin"): raise HTTPException(403,"Admin only")
