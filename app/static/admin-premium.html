@@ -91,11 +91,20 @@ function renderProxyRequests(){
   const card=document.createElement('article');card.className='widget';
   const title=document.createElement('h3');title.textContent=req.origin;card.append(title);
   const detail=document.createElement('p');detail.textContent='Von '+req.requested_by+' · '+({approved:'Freigegeben',pending:'Ausstehend',rejected:'Abgelehnt'}[req.status]||req.status);card.append(detail);
+  if(req.status==='rejected'&&req.rejection_reason){const reason=document.createElement('p');reason.textContent='Ablehnungsgrund: '+req.rejection_reason;card.append(reason)}
   if(req.status==='pending'){
    for(const [decision,label] of [['approved','Freigeben'],['rejected','Ablehnen']]){
     card.append(button(label,async()=>{
      if(decision==='approved'&&!confirm('Proxy-Ziel '+req.origin+' für alle berechtigten Benutzer freigeben?'))return;
-     const res=await fetch('/api/admin/proxy-requests/decision',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf()},body:JSON.stringify({origin:req.origin,decision})});
+     let reason='';
+     if(decision==='rejected'){
+      const entry=window.prompt('Ablehnungsgrund für '+req.origin+' (wird dem Benutzer angezeigt):');
+      if(entry===null)return;
+      reason=entry.trim();
+      if(!reason){status('Bitte einen Ablehnungsgrund eingeben.');return}
+      if(reason.length>1000){status('Maximal 1000 Zeichen erlaubt.');return}
+     }
+     const res=await fetch('/api/admin/proxy-requests/decision',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf()},body:JSON.stringify({origin:req.origin,decision,reason})});
      status(res.ok?'Entscheidung gespeichert':'Fehler: '+await res.text());
      if(res.ok)await loadProxyRequests();
     }));
