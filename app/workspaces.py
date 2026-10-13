@@ -444,7 +444,14 @@ def router(connect, require, csrf, serializer, secure, origin):
     def proxy_requests(request:Request):
         if identity(request)!=os.getenv("ADMIN_USERNAME","admin"): raise HTTPException(403,"Admin only")
         with connect() as db:
-            rows=db.execute("SELECT origin,requested_by,created_at,status FROM proxy_requests ORDER BY created_at DESC LIMIT 200").fetchall()
+            rows=db.execute("""SELECT r.origin,r.requested_by,r.created_at,
+                               CASE WHEN a.origin IS NOT NULL THEN 'approved' ELSE r.status END AS status
+                        FROM proxy_requests r LEFT JOIN proxy_allowed_origins a ON a.origin=r.origin
+                        UNION ALL
+                        SELECT a.origin,a.approved_by,a.created_at,'approved'
+                        FROM proxy_allowed_origins a
+                        WHERE NOT EXISTS(SELECT 1 FROM proxy_requests r WHERE r.origin=a.origin)
+                        ORDER BY created_at DESC LIMIT 500""").fetchall()
         return {"requests":[dict(r) for r in rows]}
     @api.post("/api/admin/proxy-requests/decision")
     async def proxy_decision(request:Request):
