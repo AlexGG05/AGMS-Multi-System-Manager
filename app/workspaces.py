@@ -48,7 +48,7 @@ def install(db):
     columns={row[1] for row in db.execute("PRAGMA table_info(workspace_navigation)").fetchall()}
     if "open_mode" not in columns:
         db.execute("ALTER TABLE workspace_navigation ADD COLUMN open_mode TEXT NOT NULL DEFAULT 'embed'")
-    for column,definition in (("favorite","INTEGER NOT NULL DEFAULT 0"),("color","TEXT NOT NULL DEFAULT ''")):
+    for column,definition in (("favorite","INTEGER NOT NULL DEFAULT 0"),("color","TEXT NOT NULL DEFAULT ''"),("icon_url","TEXT NOT NULL DEFAULT ''")):
         if column not in {row[1] for row in db.execute("PRAGMA table_info(workspace_navigation)").fetchall()}:
             db.execute("ALTER TABLE workspace_navigation ADD COLUMN "+column+" "+definition)
     db.execute("INSERT OR IGNORE INTO account_security(username,verified_at,tier) SELECT username,unixepoch(),0 FROM users WHERE username=?", (os.getenv("ADMIN_USERNAME","admin"),))
@@ -172,7 +172,7 @@ def router(connect, require, csrf, serializer, secure, origin):
         with connect() as db:
             role=membership(db,wsid,username)
             w=db.execute("SELECT id,name FROM workspaces WHERE id=?",(wsid,)).fetchone()
-            nav=db.execute("SELECT id,parent_id,title,icon,url,position,min_role,open_mode,favorite,color FROM workspace_navigation WHERE workspace_id=? ORDER BY position,id",(wsid,)).fetchall()
+            nav=db.execute("SELECT id,parent_id,title,icon,url,position,min_role,open_mode,favorite,color,icon_url FROM workspace_navigation WHERE workspace_id=? ORDER BY position,id",(wsid,)).fetchall()
         order={"viewer":0,"editor":1,"owner":2}
         return {"workspace":dict(w),"role":role,"navigation":[dict(n) for n in nav if order[role]>=order[n["min_role"]]]}
     @api.put("/api/workspaces/{wsid}/navigation")
@@ -192,15 +192,19 @@ def router(connect, require, csrf, serializer, secure, origin):
             favorite=1 if item.get("favorite") else 0
             color=str(item.get("color") or "")
             if color and not re.fullmatch(r"#[0-9a-fA-F]{6}",color): raise HTTPException(400,"Invalid color")
+            icon_url=str(item.get("icon_url") or "").strip()
+            if icon_url:
+                parsed=urlparse(icon_url)
+                if parsed.scheme!="https" or not parsed.hostname or parsed.username or parsed.password or len(icon_url)>2048: raise HTTPException(400,"Invalid icon URL")
             if ident in ids or not 1<=len(title)<=80 or len(icon)>40 or min_role not in ROLES or (parent and parent==ident): raise HTTPException(400,"Invalid item")
-            ids.add(ident);cleaned.append((ident,wsid,parent,title,icon,clean_url(item.get("url")),i,min_role,open_mode,favorite,color))
+            ids.add(ident);cleaned.append((ident,wsid,parent,title,icon,clean_url(item.get("url")),i,min_role,open_mode,favorite,color,icon_url))
         for row in cleaned:
             if row[2] and row[2] not in ids: raise HTTPException(400,"Unknown parent")
             if row[2] and next(x for x in cleaned if x[0]==row[2])[2]: raise HTTPException(400,"Nested groups are not supported")
         with connect() as db:
             membership(db,wsid,username,edit=True)
             db.execute("DELETE FROM workspace_navigation WHERE workspace_id=?",(wsid,))
-            db.executemany("INSERT INTO workspace_navigation(id,workspace_id,parent_id,title,icon,url,position,min_role,open_mode,favorite,color) VALUES(?,?,?,?,?,?,?,?,?,?,?)",cleaned)
+            db.executemany("INSERT INTO workspace_navigation(id,workspace_id,parent_id,title,icon,url,position,min_role,open_mode,favorite,color,icon_url) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",cleaned)
         return {"ok":True}
     @api.get("/api/workspaces/{wsid}/members")
     def members(request:Request,wsid:str):
