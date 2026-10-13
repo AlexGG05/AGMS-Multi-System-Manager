@@ -80,9 +80,11 @@ async def login(request:Request):
     body = await request.json()
     username, password = str(body.get("username","")),str(body.get("password",""))
     with connect() as db:
-        resolved=db.execute("SELECT username FROM account_profiles WHERE email=? OR (display_name=? AND display_name!='')",(username.lower(),username)).fetchone()
-        if resolved: username=resolved["username"]
-        elif "@" in username and username!=ADMIN: username=""
+        # Login names are public aliases only; never fall back to the internal users.username key.
+        resolved=db.execute("""SELECT username FROM account_profiles
+            WHERE lower(email)=lower(?) OR (display_name!='' AND lower(display_name)=lower(?))
+            LIMIT 1""",(username.strip(),username.strip())).fetchone()
+        username=resolved["username"] if resolved else ""
         row = db.execute("SELECT password_hash FROM users WHERE username=?",(username,)).fetchone()
     if not row or not bcrypt.checkpw(password.encode(),row["password_hash"].encode()):
         failures[ip] = recent+[now]
