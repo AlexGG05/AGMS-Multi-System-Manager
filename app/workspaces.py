@@ -47,6 +47,8 @@ def install(db):
     """)
     db.execute("CREATE TABLE IF NOT EXISTS proxy_allowed_origins (origin TEXT PRIMARY KEY, approved_by TEXT NOT NULL, created_at INTEGER NOT NULL DEFAULT (unixepoch()))")
     db.execute("CREATE TABLE IF NOT EXISTS proxy_requests (origin TEXT PRIMARY KEY, requested_by TEXT NOT NULL, created_at INTEGER NOT NULL DEFAULT (unixepoch()), status TEXT NOT NULL DEFAULT 'pending')")
+    if "rejection_reason" not in {row[1] for row in db.execute("PRAGMA table_info(proxy_requests)").fetchall()}:
+        db.execute("ALTER TABLE proxy_requests ADD COLUMN rejection_reason TEXT NOT NULL DEFAULT ''")
     columns={row[1] for row in db.execute("PRAGMA table_info(workspace_navigation)").fetchall()}
     if "open_mode" not in columns:
         db.execute("ALTER TABLE workspace_navigation ADD COLUMN open_mode TEXT NOT NULL DEFAULT 'embed'")
@@ -444,11 +446,11 @@ def router(connect, require, csrf, serializer, secure, origin):
     def proxy_requests(request:Request):
         if identity(request)!=os.getenv("ADMIN_USERNAME","admin"): raise HTTPException(403,"Admin only")
         with connect() as db:
-            rows=db.execute("""SELECT r.origin,r.requested_by,r.created_at,
+            rows=db.execute("""SELECT r.origin,r.requested_by,r.created_at,r.rejection_reason,
                                CASE WHEN a.origin IS NOT NULL THEN 'approved' ELSE r.status END AS status
                         FROM proxy_requests r LEFT JOIN proxy_allowed_origins a ON a.origin=r.origin
                         UNION ALL
-                        SELECT a.origin,a.approved_by,a.created_at,'approved'
+                        SELECT a.origin,a.approved_by,a.created_at,'' AS rejection_reason,'approved'
                         FROM proxy_allowed_origins a
                         WHERE NOT EXISTS(SELECT 1 FROM proxy_requests r WHERE r.origin=a.origin)
                         ORDER BY created_at DESC LIMIT 500""").fetchall()
@@ -461,15 +463,19 @@ def router(connect, require, csrf, serializer, secure, origin):
         origin=str(body.get("origin","")).strip().lower()
         decision=str(body.get("decision",""))
         if decision not in ("approved","rejected"): raise HTTPException(400,"Invalid decision")
+        reason=str(body.get("reason","")).strip()
+        if len(reason)>1000: raise HTTPException(400,"Begründung darf höchstens 1000 Zeichen enthalten")
+        if decision=="rejected" and not reason: raise HTTPException(400,"Bitte einen Ablehnungsgrund angeben")
         with connect() as db:
             row=db.execute("SELECT requested_by,status FROM proxy_requests WHERE origin=?",(origin,)).fetchone()
             if not row or row["status"]!="pending": raise HTTPException(404,"Pending request not found")
-            db.execute("UPDATE proxy_requests SET status=? WHERE origin=?",(decision,origin))
+            db.execute("UPDATE proxy_requests SET status=?,rejection_reason=? WHERE origin=?",(decision,reason if decision=="rejected" else "",origin))
             if decision=="approved":
                 db.execute("INSERT OR IGNORE INTO proxy_allowed_origins(origin,approved_by) VALUES(?,?)",(origin,username))
             db.execute("INSERT INTO workspace_notifications(id,username,workspace_id,message) VALUES(?,?,?,?)",
                        (secrets.token_hex(12),row["requested_by"],None,
-                        "Proxy-Anfrage "+("freigegeben: " if decision=="approved" else "abgelehnt: ")+origin))
+                        "Proxy-Anfrage "+("freigegeben: " if decision=="approved" else "abgelehnt: ")+origin+
+                        (" — Grund: "+reason if decision=="rejected" else "")))
         return {"ok":True}
     @api.delete("/api/admin/proxy-requests")
     async def delete_proxy_request(request:Request):
