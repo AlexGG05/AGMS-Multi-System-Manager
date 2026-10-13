@@ -50,7 +50,7 @@ function drawEditor(){
   if(item.url){
    card.append(field('WebUI-Adresse',item.url,v=>item.url=v,'url'));
    const label=document.createElement('label');label.className='web-config-field';const cap=document.createElement('span');cap.textContent='Öffnungsmodus';const select=document.createElement('select');
-   [['embed','Innerhalb von AGMS (iframe)'],['external','Extern in neuem Tab'],['bookstack_proxy','BookStack – Originaloberfläche über Proxy (Test)']].forEach(([v,t])=>{const o=document.createElement('option');o.value=v;o.textContent=t;select.append(o)});
+   [['embed','Innerhalb von AGMS (iframe)'],['external','Extern in neuem Tab'],['bookstack_proxy','BookStack – Originaloberfläche über Proxy']].forEach(([v,t])=>{const o=document.createElement('option');o.value=v;o.textContent=t;select.append(o)});
    select.value=item.open_mode||'embed';select.onchange=()=>item.open_mode=select.value;label.append(cap,select);card.append(label);
   }
   const actions=document.createElement('div');actions.className='web-config-actions';
