@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 from .inventory import GROUPS
 from .arcane import get_arcane, manage_container
-from . import integrations, workspaces, bookstack_proxy, web_proxy
+from . import integrations, workspaces, web_proxy
 
 DB = "/data/homelab.sqlite3"
 SECRET = os.environ.get("SESSION_SECRET", "")
@@ -60,11 +60,8 @@ def csrf(request):
 
 @app.middleware("http")
 async def bookstack_proxy_identity(request: Request, call_next):
-    if request.url.path.startswith("/bookstack-proxy/"):
-        request.state.agms_user = user(request)
     return await call_next(request)
 
-app.include_router(bookstack_proxy.router)
 app.include_router(web_proxy.setup(connect, require))
 
 @app.get("/", response_class=HTMLResponse)
