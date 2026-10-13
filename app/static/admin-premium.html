@@ -1,2 +1,119 @@
-<!doctype html><html lang="de"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AGMS · Premium-Verwaltung</title><link rel="stylesheet" href="/static/control-center.css"><main class="workspace"><div class="top"><h1>Benutzer & Premium</h1><a href="/">Zurück</a></div><p>Tier 0: 1 Homepage · Tier 1: 3 · Tier 2: 5 · Tier 3: 10</p><h2 id="proxy-requests">Proxy-Freigaben</h2><p>Neue Proxy-Ziele von Benutzern prüfen und freigeben oder ablehnen.</p><section class="overview" id="proxyRequests"></section><h2>Benutzerkonten</h2><section class="overview" id="accounts"></section><p id="status"></p></main><script>const csrf=()=>decodeURIComponent((document.cookie.match(/(?:^|; )csrf=([^;]*)/)||[])[1]||'');async function load(){const r=await fetch('/api/admin/accounts');if(!r.ok){document.getElementById('status').textContent='Nur für Administratoren';return}const d=await r.json();const root=document.getElementById('accounts');root.replaceChildren();for(const a of d.accounts){const box=document.createElement('article');box.className='widget';const name=document.createElement('h3');name.textContent=a.email||a.username;box.append(name);const role=document.createElement('p');role.textContent=a.role+(a.verified_at?' · Verifiziert':' · Nicht verifiziert');box.append(role);const select=document.createElement('select');for(let i=0;i<=3;i++){const opt=document.createElement('option');opt.value=i;opt.textContent=i?'Premium Tier '+i:'Benutzer (kostenlos)';select.append(opt)}select.value=a.tier;select.disabled=a.role==='admin';select.onchange=async()=>{const res=await fetch('/api/admin/accounts/'+encodeURIComponent(a.username)+'/tier',{method:'PUT',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf()},body:JSON.stringify({tier:Number(select.value)})});document.getElementById('status').textContent=res.ok?'Gespeichert':'Änderung fehlgeschlagen'};box.append(select);if(a.role!=='admin'){const del=document.createElement('button');del.textContent='Benutzer löschen';del.style.marginLeft='12px';del.onclick=async()=>{if(!confirm('Benutzer '+(a.email||a.username)+' und alle eigenen Homepages endgültig löschen?'))return;const res=await fetch('/api/admin/accounts/'+encodeURIComponent(a.username),{method:'DELETE',headers:{'X-CSRF-Token':csrf()}});if(res.ok){document.getElementById('status').textContent='Benutzer gelöscht';await load()}else{document.getElementById('status').textContent='Löschen fehlgeschlagen: '+(await res.text())}};box.append(del)}root.append(box)}}async function loadProxyRequests(){const r=await fetch('/api/admin/proxy-requests');if(!r.ok)return;const d=await r.json();const root=document.getElementById('proxyRequests');root.replaceChildren();for(const req of d.requests){const box=document.createElement('article');box.className='widget';const title=document.createElement('h3');title.textContent=req.origin;const info=document.createElement('p');info.textContent='Angefragt von '+req.requested_by+' · '+req.status;box.append(title,info);if(req.status==='pending'){for(const [decision,label] of [['approved','Freigeben'],['rejected','Ablehnen']]){const btn=document.createElement('button');btn.textContent=label;btn.onclick=async()=>{if(decision==='approved'&&!confirm('Proxy-Ziel '+req.origin+' für alle berechtigten AGMS-Benutzer freigeben?'))return;const res=await fetch('/api/admin/proxy-requests/decision',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf()},body:JSON.stringify({origin:req.origin,decision})});document.getElementById('status').textContent=res.ok?'Entscheidung gespeichert':'Fehler: '+await res.text();if(res.ok)await loadProxyRequests()};box.append(btn)}}root.append(box)}if(!d.requests.length)root.textContent='Keine Proxy-Anfragen vorhanden.'}
-load();loadProxyRequests();</script></html>
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AGMS · Benutzer & Proxy</title>
+<link rel="stylesheet" href="/static/control-center.css">
+<style>
+.admin-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:22px;align-items:start;margin-top:22px}
+.admin-column{min-width:0;border:1px solid rgba(150,170,200,.24);border-radius:14px;padding:16px;background:rgba(15,25,42,.35)}
+.admin-column h2{margin:0 0 6px}.admin-column p{margin:6px 0 12px}
+.admin-search{box-sizing:border-box;width:100%;min-height:42px;margin:10px 0 12px;padding:10px;border-radius:8px;border:1px solid #64748b;background:#111e31;color:#fff}
+.admin-scroll{max-height:min(70vh,850px);overflow:auto;display:grid;gap:10px;padding:3px}
+.admin-scroll .widget{min-width:0;margin:0;overflow-wrap:anywhere}
+.admin-scroll .widget h3{overflow-wrap:anywhere}
+.admin-scroll button{margin:4px 6px 4px 0}
+.admin-scroll select{max-width:100%;margin:4px 0}
+.admin-count{opacity:.8;font-size:.9rem}
+@media(max-width:850px){.admin-grid{grid-template-columns:1fr}.admin-scroll{max-height:460px}}
+</style>
+</head>
+<body><main class="workspace">
+<div class="top"><h1>Benutzer & Proxy-Freigaben</h1><a href="/">Zurück</a></div>
+<p>Tier 0: 1 Homepage · Tier 1: 3 · Tier 2: 5 · Tier 3: 10</p>
+<div class="admin-grid">
+<section class="admin-column" id="accounts-column">
+<h2>Benutzerkonten</h2>
+<input class="admin-search" id="accountSearch" type="search" placeholder="Benutzername, E-Mail oder Rolle suchen …" aria-label="Benutzer durchsuchen">
+<p class="admin-count" id="accountCount"></p>
+<div class="admin-scroll" id="accounts"></div>
+</section>
+<section class="admin-column" id="proxy-requests">
+<h2>Proxy-Freigaben</h2>
+<p>Anfragen freigeben, ablehnen oder Freigaben widerrufen.</p>
+<input class="admin-search" id="proxySearch" type="search" placeholder="Adresse, Antragsteller oder Status suchen …" aria-label="Proxy-Freigaben durchsuchen">
+<p class="admin-count" id="proxyCount"></p>
+<div class="admin-scroll" id="proxyRequests"></div>
+</section>
+</div>
+<p id="status" role="status"></p>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const csrf=()=>decodeURIComponent((document.cookie.match(/(?:^|; )csrf=([^;]*)/)||[])[1]||'');
+const state={accounts:[],requests:[]};
+const status=message=>$('status').textContent=message;
+const button=(label,callback)=>{const b=document.createElement('button');b.type='button';b.textContent=label;b.onclick=callback;return b};
+const searchMatch=(parts,query)=>parts.join(' ').toLocaleLowerCase().includes(query.toLocaleLowerCase().trim());
+async function loadAccounts(){
+ const res=await fetch('/api/admin/accounts');
+ if(!res.ok){status('Benutzerverwaltung nur für Administratoren verfügbar');return}
+ state.accounts=(await res.json()).accounts||[];renderAccounts();
+}
+function renderAccounts(){
+ const q=$('accountSearch').value;
+ const filtered=state.accounts.filter(a=>searchMatch([a.username,a.email,a.role,a.tier],q));
+ $('accountCount').textContent=filtered.length+' von '+state.accounts.length+' Benutzern';
+ const root=$('accounts');root.replaceChildren();
+ for(const a of filtered){
+  const card=document.createElement('article');card.className='widget';
+  const title=document.createElement('h3');title.textContent=a.email||a.username;card.append(title);
+  const detail=document.createElement('p');detail.textContent=a.username+' · '+a.role+(a.verified_at?' · Verifiziert':' · Nicht verifiziert');card.append(detail);
+  const select=document.createElement('select');
+  for(let i=0;i<=3;i++){const opt=document.createElement('option');opt.value=i;opt.textContent=i?'Premium Tier '+i:'Benutzer (kostenlos)';select.append(opt)}
+  select.value=a.tier;select.disabled=a.role==='admin';
+  select.onchange=async()=>{
+   const res=await fetch('/api/admin/accounts/'+encodeURIComponent(a.username)+'/tier',{method:'PUT',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf()},body:JSON.stringify({tier:Number(select.value)})});
+   if(res.ok){status('Tier gespeichert');await loadAccounts()}else{status('Änderung fehlgeschlagen');select.value=a.tier}
+  };
+  card.append(select);
+  if(a.role!=='admin')card.append(button('Benutzer löschen',async()=>{
+   if(!confirm('Benutzer '+(a.email||a.username)+' und alle eigenen Homepages endgültig löschen?'))return;
+   const res=await fetch('/api/admin/accounts/'+encodeURIComponent(a.username),{method:'DELETE',headers:{'X-CSRF-Token':csrf()}});
+   status(res.ok?'Benutzer gelöscht':'Löschen fehlgeschlagen: '+await res.text());
+   if(res.ok)await loadAccounts();
+  }));
+  root.append(card);
+ }
+ if(!filtered.length)root.textContent='Keine passenden Benutzer.';
+}
+async function loadProxyRequests(){
+ const res=await fetch('/api/admin/proxy-requests');
+ if(!res.ok){status('Proxy-Freigaben konnten nicht geladen werden');return}
+ state.requests=(await res.json()).requests||[];renderProxyRequests();
+}
+function renderProxyRequests(){
+ const q=$('proxySearch').value;
+ const filtered=state.requests.filter(r=>searchMatch([r.origin,r.requested_by,r.status],q));
+ $('proxyCount').textContent=filtered.length+' von '+state.requests.length+' Freigaben/Anfragen';
+ const root=$('proxyRequests');root.replaceChildren();
+ for(const req of filtered){
+  const card=document.createElement('article');card.className='widget';
+  const title=document.createElement('h3');title.textContent=req.origin;card.append(title);
+  const detail=document.createElement('p');detail.textContent='Von '+req.requested_by+' · '+({approved:'Freigegeben',pending:'Ausstehend',rejected:'Abgelehnt'}[req.status]||req.status);card.append(detail);
+  if(req.status==='pending'){
+   for(const [decision,label] of [['approved','Freigeben'],['rejected','Ablehnen']]){
+    card.append(button(label,async()=>{
+     if(decision==='approved'&&!confirm('Proxy-Ziel '+req.origin+' für alle berechtigten Benutzer freigeben?'))return;
+     const res=await fetch('/api/admin/proxy-requests/decision',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf()},body:JSON.stringify({origin:req.origin,decision})});
+     status(res.ok?'Entscheidung gespeichert':'Fehler: '+await res.text());
+     if(res.ok)await loadProxyRequests();
+    }));
+   }
+  }
+  card.append(button(req.status==='approved'?'Freigabe entfernen':'Anfrage entfernen',async()=>{
+   const warning=req.status==='approved'?'Die Freigabe wird widerrufen. Bestehende WebUI-Kacheln bleiben erhalten, können aber den Proxy nicht mehr nutzen.':'Die Anfrage wird dauerhaft aus der Liste entfernt.';
+   if(!confirm(req.origin+'\n\n'+warning))return;
+   const res=await fetch('/api/admin/proxy-requests',{method:'DELETE',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf()},body:JSON.stringify({origin:req.origin})});
+   status(res.ok?'Proxy-Eintrag entfernt':'Entfernen fehlgeschlagen: '+await res.text());
+   if(res.ok)await loadProxyRequests();
+  }));
+  root.append(card);
+ }
+ if(!filtered.length)root.textContent='Keine passenden Proxy-Einträge.';
+}
+$('accountSearch').addEventListener('input',renderAccounts);
+$('proxySearch').addEventListener('input',renderProxyRequests);
+loadAccounts().catch(e=>status(e.message));
+loadProxyRequests().catch(e=>status(e.message));
+</script></body></html>
