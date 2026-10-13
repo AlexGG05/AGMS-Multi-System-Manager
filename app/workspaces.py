@@ -1,5 +1,5 @@
 """Multi-user workspace API. Existing login/session and legacy dashboard remain intact."""
-import os, re, json, time, secrets, hashlib, sqlite3
+import os, re, json, time, secrets, hashlib, sqlite3, socket, ssl, ipaddress, asyncio
 from urllib.parse import urlparse
 import bcrypt
 from fastapi import APIRouter, Request, HTTPException
@@ -175,6 +175,45 @@ def router(connect, require, csrf, serializer, secure, origin):
             nav=db.execute("SELECT id,parent_id,title,icon,url,position,min_role,open_mode,favorite,color,icon_url FROM workspace_navigation WHERE workspace_id=? ORDER BY position,id",(wsid,)).fetchall()
         order={"viewer":0,"editor":1,"owner":2}
         return {"workspace":dict(w),"role":role,"navigation":[dict(n) for n in nav if order[role]>=order[n["min_role"]]]}
+    @api.get("/api/workspaces/{wsid}/status/{item_id}")
+    async def navigation_status(request:Request,wsid:str,item_id:str):
+        username=identity(request)
+        with connect() as db:
+            role=membership(db,wsid,username)
+            item=db.execute("SELECT url,min_role FROM workspace_navigation WHERE workspace_id=? AND id=?",(wsid,item_id)).fetchone()
+        if not item or not item["url"]: raise HTTPException(404,"WebUI not found")
+        if {"viewer":0,"editor":1,"owner":2}[role]<{"viewer":0,"editor":1,"owner":2}.get(item["min_role"],3):
+            raise HTTPException(404,"WebUI not found")
+        target=urlparse(item["url"])
+        if target.scheme not in ("http","https") or not target.hostname: return {"status":"unknown"}
+        if target.username or target.password: return {"status":"unknown"}
+        port=target.port or (443 if target.scheme=="https" else 80)
+        if port not in (80,443,8080,8443): return {"status":"unknown","reason":"port"}
+        def check():
+            try:
+                hostname=target.hostname
+                addresses=socket.getaddrinfo(hostname,port,type=socket.SOCK_STREAM)
+                ips={address[4][0] for address in addresses}
+                if not ips or any(not ipaddress.ip_address(ip).is_global for ip in ips):
+                    return {"status":"unknown","reason":"private"}
+                ip=sorted(ips)[0]
+                sock=socket.create_connection((ip,port),timeout=3)
+                try:
+                    sock.settimeout(3)
+                    if target.scheme=="https":
+                        sock=ssl.create_default_context().wrap_socket(sock,server_hostname=hostname)
+                    path=target.path or "/"
+                    if target.query:path+="?"+target.query
+                    host_header=hostname if port in (80,443) else hostname+":"+str(port)
+                    request_line="HEAD "+path+" HTTP/1.1\\r\\nHost: "+host_header+"\\r\\nConnection: close\\r\\nUser-Agent: AGMS-Status/1.0\\r\\n\\r\\n"
+                    sock.sendall(request_line.encode("utf-8"))
+                    response=sock.recv(256)
+                    if response.startswith(b"HTTP/"):return {"status":"online"}
+                    return {"status":"unknown"}
+                finally:sock.close()
+            except (OSError,ssl.SSLError,ValueError,UnicodeError):
+                return {"status":"offline"}
+        return await asyncio.to_thread(check)
     @api.put("/api/workspaces/{wsid}/navigation")
     async def update_navigation(request:Request,wsid:str):
         username=identity(request);csrf(request)
