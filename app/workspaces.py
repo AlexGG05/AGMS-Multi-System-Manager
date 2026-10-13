@@ -46,6 +46,9 @@ def install(db):
     CREATE INDEX IF NOT EXISTS idx_nav_workspace ON workspace_navigation(workspace_id,position);
     """)
     db.execute("CREATE TABLE IF NOT EXISTS proxy_allowed_origins (origin TEXT PRIMARY KEY, approved_by TEXT NOT NULL, created_at INTEGER NOT NULL DEFAULT (unixepoch()))")
+    # Migrate legacy BookStack opening mode without deleting or recreating WebUIs.
+    db.execute("UPDATE workspace_navigation SET open_mode='proxy' WHERE open_mode='bookstack_proxy' AND url IN ('https://book.agrosskopf.de','https://book.agrosskopf.de/')")
+    db.execute("INSERT OR IGNORE INTO proxy_allowed_origins(origin,approved_by) VALUES('https://book.agrosskopf.de',?)",(os.getenv("ADMIN_USERNAME","admin"),))
     db.execute("CREATE TABLE IF NOT EXISTS proxy_requests (origin TEXT PRIMARY KEY, requested_by TEXT NOT NULL, created_at INTEGER NOT NULL DEFAULT (unixepoch()), status TEXT NOT NULL DEFAULT 'pending')")
     columns={row[1] for row in db.execute("PRAGMA table_info(workspace_navigation)").fetchall()}
     if "open_mode" not in columns:
@@ -322,9 +325,8 @@ def router(connect, require, csrf, serializer, secure, origin):
             parent=item.get("parent_id");parent=str(parent) if parent else None
             min_role=str(item.get("min_role","viewer"))
             open_mode=str(item.get("open_mode","embed"))
-            if open_mode not in ("embed","external","bookstack_proxy","proxy"): raise HTTPException(400,"Invalid open mode")
+            if open_mode not in ("embed","external","proxy"): raise HTTPException(400,"Invalid open mode")
             if open_mode=="proxy" and (urlparse(str(item.get("url",""))).path not in ("","/") or urlparse(str(item.get("url",""))).scheme!="https"): raise HTTPException(400,"Proxy requires an HTTPS origin without a path")
-            if open_mode=="bookstack_proxy" and str(item.get("url","")).rstrip("/")!="https://book.agrosskopf.de": raise HTTPException(400,"BookStack Proxy ist nur für book.agrosskopf.de erlaubt")
             favorite=1 if item.get("favorite") else 0
             color=str(item.get("color") or "")
             if color and not re.fullmatch(r"#[0-9a-fA-F]{6}",color): raise HTTPException(400,"Invalid color")
