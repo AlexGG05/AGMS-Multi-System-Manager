@@ -104,6 +104,8 @@ def router(connect, require, csrf, serializer, secure, origin):
         name=str(value or "").strip()
         if not 3<=len(name)<=32 or not re.fullmatch(r"[\w .-]+",name,re.UNICODE):
             raise HTTPException(400,"Benutzername: 3–32 Zeichen (Buchstaben, Zahlen, Leerzeichen, Punkt, Bindestrich)")
+        if name.casefold() in {"admin","administrator","root","system","support","agms"}:
+            raise HTTPException(400,"Dieser Benutzername ist reserviert")
         return name
     def validate_avatar(value):
         if not value:return ""
