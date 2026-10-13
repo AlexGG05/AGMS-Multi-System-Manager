@@ -11,18 +11,25 @@ const action=(label,fn)=>{const b=make('button',label,'agms-action');b.type='but
 const key=()=> 'agms-view-'+(workspace?.id||'');
 view.value=getStore(key(),'tiles');
 const origTile=tile,origRenderNav=renderNav,origShowHome=showHome,origShowGroup=showGroup,origOpenWorkspace=openWorkspace;
+const statusCache=new Map();
 function statusIndicator(item,container){
- if(!item.url)return;
- const indicator=make('span','Status prüfen …','agms-status');container.append(indicator);
- const url=item.url;
- let parsed;try{parsed=new URL(url)}catch{indicator.textContent='Ungültige URL';return}
- if(location.protocol==='https:'&&parsed.protocol==='http:'){indicator.textContent='HTTP · nicht prüfbar';return}
- const ctrl=new AbortController();const timeout=setTimeout(()=>ctrl.abort(),5000);
- fetch(url,{mode:'no-cors',credentials:'omit',cache:'no-store',signal:ctrl.signal,redirect:'manual'})
- .then(()=>{indicator.textContent='● Erreichbar';indicator.classList.add('agms-online')})
- .catch(()=>{indicator.textContent='● Nicht prüfbar';indicator.title='Browser-Sicherheitsregeln, VPN, Login oder Netzwerk können die Prüfung verhindern'})
- .finally(()=>clearTimeout(timeout));
+ if(!item.url||!workspace)return;
+ const indicator=make('span','● Prüfe …','agms-status');container.append(indicator);
+ const key=workspace.id+':'+item.id;
+ function show(data){
+  indicator.classList.remove('agms-online','agms-offline');
+  if(data.status==='online'){indicator.textContent='● Online';indicator.classList.add('agms-online')}
+  else if(data.status==='offline'){indicator.textContent='● Offline';indicator.classList.add('agms-offline')}
+  else{indicator.textContent='● Nicht prüfbar';indicator.title=data.reason==='private'?'Interne oder private Adressen werden aus Sicherheitsgründen nicht geprüft':'Der Status dieses Dienstes kann nicht ermittelt werden'}
+ }
+ const cached=statusCache.get(key);
+ if(cached&&Date.now()-cached.time<60000){show(cached.data);return}
+ fetch('/api/workspaces/'+encodeURIComponent(workspace.id)+'/status/'+encodeURIComponent(item.id),{credentials:'same-origin'})
+ .then(async r=>{if(!r.ok)throw Error('HTTP '+r.status);return r.json()})
+ .then(data=>{statusCache.set(key,{time:Date.now(),data});show(data)})
+ .catch(()=>show({status:'unknown'}));
 }
+
 tile=function(item){
  const b=origTile(item);if(item.color)b.style.borderColor=item.color;
  if(item.color)b.style.setProperty('--agms-tile-color',item.color);
