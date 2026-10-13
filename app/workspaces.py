@@ -279,6 +279,7 @@ def router(connect, require, csrf, serializer, secure, origin):
         token=secrets.token_urlsafe(32);ident=secrets.token_hex(12);expiry=int(time.time())+7*86400
         with connect() as db:
             membership(db,wsid,username,owner=True)
+            require_workspace_editable(db,wsid)
             existing=db.execute("SELECT p.username FROM account_profiles p JOIN account_security s ON s.username=p.username WHERE p.email=? AND s.verified_at IS NOT NULL",(email,)).fetchone()
             if existing:
                 member=existing["username"]
