@@ -69,6 +69,18 @@ def router(connect, require, csrf, serializer, secure, origin):
         if owner and row["role"]!="owner": raise HTTPException(403,"Owner permission required")
         if edit and row["role"] not in ("owner","editor"): raise HTTPException(403,"Editor permission required")
         return row["role"]
+    def workspace_editable(db,wsid):
+        owner=db.execute("SELECT owner FROM workspaces WHERE id=?",(wsid,)).fetchone()
+        if not owner: raise HTTPException(404,"Workspace not found")
+        if owner["owner"]==os.getenv("ADMIN_USERNAME","admin"): return True
+        level=db.execute("SELECT tier FROM account_security WHERE username=?",(owner["owner"],)).fetchone()
+        tier=level["tier"] if level and level["tier"] in (0,1,2,3) else 0
+        limit={0:1,1:3,2:5,3:10}[tier]
+        ids=[row["id"] for row in db.execute("SELECT id FROM workspaces WHERE owner=? ORDER BY created_at,id",(owner["owner"],)).fetchall()]
+        return wsid in ids[:limit]
+    def require_workspace_editable(db,wsid):
+        if not workspace_editable(db,wsid):
+            raise HTTPException(403,"Diese Homepage ist aufgrund des aktuellen Tiers schreibgeschützt")
     def ensure_default(db, username):
         if db.execute("SELECT 1 FROM workspaces WHERE owner=? LIMIT 1",(username,)).fetchone(): return
         wid=secrets.token_hex(12)
@@ -110,9 +122,10 @@ def router(connect, require, csrf, serializer, secure, origin):
         with connect() as db:
             ensure_default(db,username)
             rows=db.execute("SELECT w.id,w.name,m.role FROM workspaces w JOIN workspace_members m ON w.id=m.workspace_id WHERE m.username=? ORDER BY w.created_at,w.name",(username,)).fetchall()
+            workspaces_out=[{**dict(x),"editable":workspace_editable(db,x["id"])} for x in rows]
             profile=db.execute("SELECT role FROM account_profiles WHERE username=?",(username,)).fetchone()
             security=db.execute("SELECT tier FROM account_security WHERE username=?",(username,)).fetchone()
-        return {"workspaces":[dict(x) for x in rows],"account_role":profile["role"] if profile else "user","tier":int(security["tier"]) if security else 0}
+        return {"workspaces":workspaces_out,"account_role":profile["role"] if profile else "user","tier":int(security["tier"]) if security else 0}
     @api.post("/api/workspaces")
     async def create_workspace(request:Request):
         username=identity(request);csrf(request)
@@ -135,6 +148,7 @@ def router(connect, require, csrf, serializer, secure, origin):
         if not 1<=len(name)<=80: raise HTTPException(400,"Name must be 1-80 characters")
         with connect() as db:
             membership(db,wsid,username,owner=True)
+            require_workspace_editable(db,wsid)
             db.execute("UPDATE workspaces SET name=? WHERE id=?",(name,wsid))
         return {"ok":True,"name":name}
     @api.get("/api/notifications")
@@ -164,6 +178,7 @@ def router(connect, require, csrf, serializer, secure, origin):
         username=identity(request);csrf(request)
         with connect() as db:
             membership(db,wsid,username,owner=True)
+            require_workspace_editable(db,wsid)
             if member==username: raise HTTPException(400,"Owner cannot be removed")
             db.execute("DELETE FROM workspace_members WHERE workspace_id=? AND username=? AND role!='owner'",(wsid,member))
         return {"ok":True}
@@ -174,8 +189,9 @@ def router(connect, require, csrf, serializer, secure, origin):
             role=membership(db,wsid,username)
             w=db.execute("SELECT id,name FROM workspaces WHERE id=?",(wsid,)).fetchone()
             nav=db.execute("SELECT id,parent_id,title,icon,url,position,min_role,open_mode,favorite,color,icon_url FROM workspace_navigation WHERE workspace_id=? ORDER BY position,id",(wsid,)).fetchall()
+            editable=workspace_editable(db,wsid)
         order={"viewer":0,"editor":1,"owner":2}
-        return {"workspace":dict(w),"role":role,"navigation":[dict(n) for n in nav if order[role]>=order[n["min_role"]]]}
+        return {"workspace":dict(w),"role":role,"editable":editable,"navigation":[dict(n) for n in nav if order[role]>=order[n["min_role"]]]}
     @api.get("/api/workspaces/{wsid}/status/{item_id}")
     async def navigation_status(request:Request,wsid:str,item_id:str):
         username=identity(request)
@@ -244,6 +260,7 @@ def router(connect, require, csrf, serializer, secure, origin):
             if row[2] and next(x for x in cleaned if x[0]==row[2])[2]: raise HTTPException(400,"Nested groups are not supported")
         with connect() as db:
             membership(db,wsid,username,edit=True)
+            require_workspace_editable(db,wsid)
             db.execute("DELETE FROM workspace_navigation WHERE workspace_id=?",(wsid,))
             db.executemany("INSERT INTO workspace_navigation(id,workspace_id,parent_id,title,icon,url,position,min_role,open_mode,favorite,color,icon_url) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",cleaned)
         return {"ok":True}
