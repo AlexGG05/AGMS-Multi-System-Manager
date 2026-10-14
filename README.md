@@ -112,3 +112,17 @@ Volume name can vary by Compose project; verify with `docker volume ls`.
 ```bash
 docker compose up -d --build
 ```
+
+### Admin Panel and tickets
+
+The homepage sidebar offers **Create Ticket** to signed-in users. Tickets contain a subject (1–200 characters) and a category: Problem, Idea, Wish or Other. They are stored in SQLite.
+
+Accounts with the `admin` role can open **Admin Panel**, then select **Proxy requests**, **Users** or **Tickets**. Administrative APIs enforce that role server-side. English is the default language; the language selector switches the interface to German.
+
+Run the admin/ticket API regression tests after installing `requirements.txt`:
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+The tests use an isolated temporary SQLite database and do not need external integrations.

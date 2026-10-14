@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AGMS · Admin Panel</title>
+<link rel="stylesheet" href="/static/control-center.css">
+<style>
+.admin-menu{display:flex;flex-wrap:wrap;gap:12px;margin-top:22px}.admin-menu [aria-pressed="true"]{outline:2px solid #75baff}.admin-column[hidden],.admin-menu[hidden]{display:none}.admin-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:22px;align-items:start;margin-top:22px}
+.admin-column{min-width:0;border:1px solid rgba(150,170,200,.24);border-radius:14px;padding:16px;background:rgba(15,25,42,.35)}
+.admin-column h2{margin:0 0 6px}.admin-column p{margin:6px 0 12px}
+.admin-search{box-sizing:border-box;width:100%;min-height:42px;margin:10px 0 12px;padding:10px;border-radius:8px;border:1px solid #64748b;background:#111e31;color:#fff}
+.admin-scroll{max-height:min(70vh,850px);overflow:auto;display:grid;gap:10px;padding:3px}
+.admin-scroll .widget{min-width:0;margin:0;overflow-wrap:anywhere}
+.admin-scroll .widget h3{overflow-wrap:anywhere}
+.admin-scroll button{margin:4px 6px 4px 0}
+.admin-scroll select{max-width:100%;margin:4px 0}
+.admin-count{opacity:.8;font-size:.9rem}
+@media(max-width:850px){.admin-grid{grid-template-columns:1fr}.admin-scroll{max-height:460px}}
+</style>
+</head>
+<body><main class="workspace">
+<div class="top"><h1>Admin Panel</h1><a href="/">Back</a></div>
+<nav class="admin-menu" aria-label="Admin sections" hidden><button type="button" data-section="proxy-requests" aria-pressed="false">Proxy requests</button><button type="button" data-section="accounts-column" aria-pressed="false">Users</button><button type="button" data-section="tickets-column" aria-pressed="false">Tickets</button></nav>
+<div class="admin-grid">
+<section class="admin-column" id="accounts-column" hidden>
+<h2>Users</h2><p>Tier 0: 1 homepage · Tier 1: 3 · Tier 2: 5 · Tier 3: 10</p>
+<input class="admin-search" id="accountSearch" type="search" placeholder="Search username, email or role …" aria-label="Search users">
+<p class="admin-count" id="accountCount"></p>
+<div class="admin-scroll" id="accounts"></div>
+</section>
+<section class="admin-column" id="proxy-requests" hidden>
+<h2>Proxy requests</h2>
+<p>Approve or reject requests, or revoke existing approvals.</p>
+<input class="admin-search" id="proxySearch" type="search" placeholder="Search address, requester or status …" aria-label="Search proxy requests">
+<p class="admin-count" id="proxyCount"></p>
+<div class="admin-scroll" id="proxyRequests"></div>
+</section>
+</div>
+<section class="admin-column" id="tickets-column" hidden><h2>Tickets</h2><input class="admin-search" id="ticketSearch" type="search" placeholder="Search subject, category or requester" aria-label="Search tickets"><div class="admin-scroll" id="tickets"></div></section><p id="status" role="status"></p>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const csrf=()=>decodeURIComponent((document.cookie.match(/(?:^|; )csrf=([^;]*)/)||[])[1]||'');
+const state={accounts:[],requests:[],tickets:[]};
+const t=text=>window.agmsTranslate?window.agmsTranslate(text):text;
+const status=message=>$('status').textContent=message;
+const button=(label,callback)=>{const b=document.createElement('button');b.type='button';b.textContent=label;b.onclick=callback;return b};
+const searchMatch=(parts,query)=>parts.join(' ').toLocaleLowerCase().includes(query.toLocaleLowerCase().trim());
+async function loadAccounts(){
+ const res=await fetch('/api/admin/accounts');
+ if(!res.ok){status('User administration is only available to administrators');return}
+ state.accounts=(await res.json()).accounts||[];renderAccounts();
+}
+function renderAccounts(){
+ const q=$('accountSearch').value;
+ const filtered=state.accounts.filter(a=>searchMatch([a.username,a.email,a.role,a.tier],q));
+ $('accountCount').textContent=filtered.length+' / '+state.accounts.length;
+ const root=$('accounts');root.replaceChildren();
+ for(const a of filtered){
+  const card=document.createElement('article');card.className='widget';
+  const title=document.createElement('h3');title.textContent=a.email||a.username;card.append(title);
+  const detail=document.createElement('p');detail.textContent=a.username+' · '+a.role+' · ';const verification=document.createElement('span');verification.textContent=a.verified_at?'Verified':'Not verified';detail.append(verification);card.append(detail);
+  const select=document.createElement('select');
+  for(let i=0;i<=3;i++){const opt=document.createElement('option');opt.value=i;opt.textContent=i?'Premium Tier '+i:'User (free)';select.append(opt)}
+  select.value=a.tier;select.disabled=a.role==='admin';
+  select.onchange=async()=>{
+   const res=await fetch('/api/admin/accounts/'+encodeURIComponent(a.username)+'/tier',{method:'PUT',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf()},body:JSON.stringify({tier:Number(select.value)})});
+   if(res.ok){status('Tier saved');await loadAccounts()}else{status('Update failed');select.value=a.tier}
+  };
+  card.append(select);
+  if(a.role!=='admin')card.append(button('Delete user',async()=>{
+   if(!confirm(t('Delete this user and all their homepages?')+' '+(a.email||a.username)))return;
+   const res=await fetch('/api/admin/accounts/'+encodeURIComponent(a.username),{method:'DELETE',headers:{'X-CSRF-Token':csrf()}});
+   status(res.ok?'User deleted':'Could not delete user.');
+   if(res.ok)await loadAccounts();
+  }));
+  root.append(card);
+ }
+ if(!filtered.length)root.textContent='No matching users.';
+}
+async function loadProxyRequests(){
+ const res=await fetch('/api/admin/proxy-requests');
+ if(!res.ok){status('Could not load proxy approvals');return}
+ state.requests=(await res.json()).requests||[];renderProxyRequests();
+}
+function renderProxyRequests(){
+ const q=$('proxySearch').value;
+ const filtered=state.requests.filter(r=>searchMatch([r.origin,r.requested_by,r.status],q));
+ $('proxyCount').textContent=filtered.length+' / '+state.requests.length;
+ const root=$('proxyRequests');root.replaceChildren();
+ for(const req of filtered){
+  const card=document.createElement('article');card.className='widget';
+  const title=document.createElement('h3');title.textContent=req.origin;card.append(title);
+  const detail=document.createElement('p');detail.textContent=req.requested_by+' · ';const decision=document.createElement('span');decision.textContent=({approved:'Approved',pending:'Pending',rejected:'Rejected'}[req.status]||req.status);detail.append(decision);card.append(detail);
+  if(req.status==='rejected'&&req.rejection_reason){const reason=document.createElement('p');const label=document.createElement('span');label.textContent='Rejection reason:';reason.append(label,document.createTextNode(' '+req.rejection_reason));card.append(reason)}
+  if(req.status==='pending'){
+   for(const [decision,label] of [['approved','Approve'],['rejected','Reject']]){
+    card.append(button(label,async()=>{
+     if(decision==='approved'&&!confirm(t('Approve this proxy destination?')+' '+req.origin))return;
+     let reason='';
+     if(decision==='rejected'){
+      const entry=window.prompt(t('Rejection reason:')+' '+req.origin);
+      if(entry===null)return;
+      reason=entry.trim();
+      if(!reason){status('Please enter a rejection reason.');return}
+      if(reason.length>1000){status('Maximum 1000 characters.');return}
+     }
+     const res=await fetch('/api/admin/proxy-requests/decision',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf()},body:JSON.stringify({origin:req.origin,decision,reason})});
+     status(res.ok?'Decision saved':'Could not save decision.');
+     if(res.ok)await loadProxyRequests();
+    }));
+   }
+  }
+  card.append(button(req.status==='approved'?'Revoke approval':'Remove request',async()=>{
+   const warning=req.status==='approved'?t('Revoke this approval? Existing web interfaces will lose proxy access.'):t('Permanently remove this request?');
+   if(!confirm(req.origin+'\n\n'+warning))return;
+   const res=await fetch('/api/admin/proxy-requests',{method:'DELETE',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf()},body:JSON.stringify({origin:req.origin})});
+   status(res.ok?'Proxy entry removed':'Removal failed');
+   if(res.ok)await loadProxyRequests();
+  }));
+  root.append(card);
+ }
+ if(!filtered.length)root.textContent='No matching proxy entries.';
+}
+$('accountSearch').addEventListener('input',renderAccounts);
+$('proxySearch').addEventListener('input',renderProxyRequests);
+function renderTickets(){
+ const root=$('tickets');root.replaceChildren();
+ const filtered=state.tickets.filter(ticket=>searchMatch([ticket.subject,ticket.category,ticket.username,ticket.email||''],$('ticketSearch').value));
+ for(const ticket of filtered){
+  const card=document.createElement('article');card.className='widget';
+  const title=document.createElement('h3');title.textContent=ticket.subject;title.dataset.agmsI18nIgnore='';
+  const category=document.createElement('p');category.textContent={problem:'Problem',idea:'Idea',wish:'Wish',other:'Other'}[ticket.category];
+  const author=document.createElement('p');author.textContent=(ticket.email||ticket.username)+' · '+new Date(ticket.created_at*1000).toLocaleString();author.dataset.agmsI18nIgnore='';
+  card.append(title,category,author);root.append(card);
+ }
+ if(!filtered.length)root.textContent='No tickets found.';
+}
+$('ticketSearch').addEventListener('input',renderTickets);
+document.querySelectorAll('[data-section]').forEach(button=>button.onclick=async()=>{
+ document.querySelectorAll('.admin-column').forEach(section=>section.hidden=section.id!==button.dataset.section);
+ document.querySelectorAll('[data-section]').forEach(item=>item.setAttribute('aria-pressed',String(item===button)));
+ status('');
+ try{
+ if(button.dataset.section==='accounts-column')await loadAccounts();
+ else if(button.dataset.section==='proxy-requests')await loadProxyRequests();
+ else{const res=await fetch('/api/admin/tickets');if(!res.ok)throw Error('Could not load tickets.');state.tickets=(await res.json()).tickets;renderTickets()}
+ }catch(e){status(e.message)}
+});
+(async()=>{
+ const res=await fetch('/api/workspaces');
+ if(!res.ok||(await res.json()).account_role!=='admin'){
+ document.querySelector('.admin-menu').hidden=true;status('Administrators only');
+ }else{document.querySelector('.admin-menu').hidden=false;const section=location.hash.slice(1);const button=Array.from(document.querySelectorAll('[data-section]')).find(item=>item.dataset.section===section);if(button)button.click()}
+})().catch(()=>status('Administrators only'));
+</script><script src="/static/agms-i18n.js?v=20261014" defer></script></body></html>

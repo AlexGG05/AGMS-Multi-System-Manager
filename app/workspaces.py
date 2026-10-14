@@ -45,6 +45,11 @@ def install(db):
     CREATE INDEX IF NOT EXISTS idx_members_username ON workspace_members(username);
     CREATE INDEX IF NOT EXISTS idx_nav_workspace ON workspace_navigation(workspace_id,position);
     """)
+    db.execute("""CREATE TABLE IF NOT EXISTS support_tickets (
+      id TEXT PRIMARY KEY, username TEXT NOT NULL, subject TEXT NOT NULL,
+      category TEXT NOT NULL CHECK(category IN ('problem','idea','wish','other')),
+      created_at INTEGER NOT NULL DEFAULT (unixepoch())
+    )""")
     db.execute("CREATE TABLE IF NOT EXISTS proxy_allowed_origins (origin TEXT PRIMARY KEY, approved_by TEXT NOT NULL, created_at INTEGER NOT NULL DEFAULT (unixepoch()))")
     db.execute("CREATE TABLE IF NOT EXISTS proxy_requests (origin TEXT PRIMARY KEY, requested_by TEXT NOT NULL, created_at INTEGER NOT NULL DEFAULT (unixepoch()), status TEXT NOT NULL DEFAULT 'pending')")
     if "rejection_reason" not in {row[1] for row in db.execute("PRAGMA table_info(proxy_requests)").fetchall()}:
@@ -76,6 +81,38 @@ def router(connect, require, csrf, serializer, secure, origin):
                 row=db.execute("SELECT verified_at FROM account_security WHERE username=?",(username,)).fetchone()
             if not row or not row["verified_at"]: raise HTTPException(403,"Email verification required")
         return username
+    def require_admin(request):
+        username=identity(request)
+        with connect() as db:
+            profile=db.execute("SELECT role FROM account_profiles WHERE username=?",(username,)).fetchone()
+        if not profile or profile["role"]!="admin": raise HTTPException(403,"Admin only")
+        return username
+
+    @api.post("/api/tickets", status_code=201)
+    async def create_ticket(request:Request):
+        username=identity(request);csrf(request)
+        try:
+            body=await request.json()
+        except (ValueError,UnicodeDecodeError):
+            raise HTTPException(400,"Invalid ticket JSON")
+        if not isinstance(body,dict): raise HTTPException(400,"Invalid ticket")
+        subject=body.get("subject");category=body.get("category")
+        if not isinstance(subject,str) or not 1<=len(subject.strip())<=200:
+            raise HTTPException(400,"Subject must be 1-200 characters")
+        if not isinstance(category,str) or category not in ("problem","idea","wish","other"):
+            raise HTTPException(400,"Invalid ticket category")
+        ident=secrets.token_hex(12)
+        with connect() as db:
+            db.execute("INSERT INTO support_tickets(id,username,subject,category) VALUES(?,?,?,?)",(ident,username,subject.strip(),category))
+        return {"id":ident}
+
+    @api.get("/api/admin/tickets")
+    def tickets(request:Request):
+        require_admin(request)
+        with connect() as db:
+            rows=db.execute("SELECT t.*,p.email FROM support_tickets t LEFT JOIN account_profiles p ON p.username=t.username ORDER BY t.created_at DESC,t.id DESC").fetchall()
+        return {"tickets":[dict(row) for row in rows]}
+
     def membership(db, wsid, username, edit=False, owner=False):
         row=db.execute("SELECT role FROM workspace_members WHERE workspace_id=? AND username=?", (wsid,username)).fetchone()
         if not row: raise HTTPException(404,"Workspace not found")
@@ -444,7 +481,7 @@ def router(connect, require, csrf, serializer, secure, origin):
         return {"ok":True}
     @api.get("/api/admin/proxy-requests")
     def proxy_requests(request:Request):
-        if identity(request)!=os.getenv("ADMIN_USERNAME","admin"): raise HTTPException(403,"Admin only")
+        require_admin(request)
         with connect() as db:
             rows=db.execute("""SELECT r.origin,r.requested_by,r.created_at,r.rejection_reason,
                                CASE WHEN a.origin IS NOT NULL THEN 'approved' ELSE r.status END AS status
@@ -458,7 +495,7 @@ def router(connect, require, csrf, serializer, secure, origin):
     @api.post("/api/admin/proxy-requests/decision")
     async def proxy_decision(request:Request):
         username=identity(request);csrf(request)
-        if username!=os.getenv("ADMIN_USERNAME","admin"): raise HTTPException(403,"Admin only")
+        require_admin(request)
         body=await request.json()
         origin=str(body.get("origin","")).strip().lower()
         decision=str(body.get("decision",""))
@@ -480,7 +517,7 @@ def router(connect, require, csrf, serializer, secure, origin):
     @api.delete("/api/admin/proxy-requests")
     async def delete_proxy_request(request:Request):
         username=identity(request);csrf(request)
-        if username!=os.getenv("ADMIN_USERNAME","admin"): raise HTTPException(403,"Admin only")
+        require_admin(request)
         body=await request.json()
         origin=str(body.get("origin","")).strip().lower()
         parsed=urlparse(origin)
@@ -498,17 +535,18 @@ def router(connect, require, csrf, serializer, secure, origin):
         return {"ok":True}
     @api.get("/api/admin/accounts")
     def accounts(request:Request):
-        if identity(request)!=os.getenv("ADMIN_USERNAME","admin"): raise HTTPException(403,"Admin only")
+        require_admin(request)
         with connect() as db:
             rows=db.execute("SELECT p.username,p.email,p.role,COALESCE(s.tier,0) tier,s.verified_at FROM account_profiles p LEFT JOIN account_security s ON s.username=p.username ORDER BY p.created_at DESC LIMIT 500").fetchall()
         return {"accounts":[dict(x) for x in rows]}
     @api.delete("/api/admin/accounts/{username}")
     def delete_account(request:Request,username:str):
         admin=identity(request);csrf(request)
-        if admin!=os.getenv("ADMIN_USERNAME","admin"): raise HTTPException(403,"Admin only")
+        require_admin(request)
         if username==admin: raise HTTPException(400,"Admin account cannot be deleted")
         with connect() as db:
             if not db.execute("SELECT 1 FROM users WHERE username=?",(username,)).fetchone(): raise HTTPException(404,"Account not found")
+            if db.execute("SELECT 1 FROM account_profiles WHERE username=? AND role='admin'",(username,)).fetchone(): raise HTTPException(400,"Admin account cannot be deleted")
             owned=[x[0] for x in db.execute("SELECT id FROM workspaces WHERE owner=?",(username,)).fetchall()]
             for wsid in owned:
                 db.execute("DELETE FROM workspace_notifications WHERE workspace_id=?",(wsid,))
@@ -520,17 +558,19 @@ def router(connect, require, csrf, serializer, secure, origin):
             db.execute("DELETE FROM workspace_notifications WHERE username=?",(username,))
             db.execute("DELETE FROM account_tokens WHERE username=?",(username,))
             db.execute("DELETE FROM account_security WHERE username=?",(username,))
+            db.execute("DELETE FROM support_tickets WHERE username=?",(username,))
             db.execute("DELETE FROM account_profiles WHERE username=?",(username,))
             db.execute("DELETE FROM users WHERE username=?",(username,))
         return {"ok":True}
     @api.put("/api/admin/accounts/{username}/tier")
     async def tier(request:Request,username:str):
-        if identity(request)!=os.getenv("ADMIN_USERNAME","admin"): raise HTTPException(403,"Admin only")
+        require_admin(request)
         csrf(request);body=await request.json();level=body.get("tier")
         if type(level)!=int or level not in (0,1,2,3): raise HTTPException(400,"Tier must be 0-3")
         if username==os.getenv("ADMIN_USERNAME","admin"): raise HTTPException(400,"Cannot change admin tier")
         with connect() as db:
             if not db.execute("SELECT 1 FROM users WHERE username=?",(username,)).fetchone(): raise HTTPException(404,"Unknown user")
+            if db.execute("SELECT 1 FROM account_profiles WHERE username=? AND role='admin'",(username,)).fetchone(): raise HTTPException(400,"Cannot change admin tier")
             db.execute("INSERT INTO account_security(username,tier) VALUES(?,?) ON CONFLICT(username) DO UPDATE SET tier=excluded.tier",(username,level))
             db.execute("UPDATE account_profiles SET role=? WHERE username=?",("premium" if level else "user",username))
         return {"ok":True,"tier":level}

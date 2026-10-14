@@ -94,20 +94,23 @@ Object.assign(translations,{
 'Nicht prüfbar':'Cannot check',
 'Export JSON':'Export JSON','Import JSON':'Import JSON'
 });
+Object.assign(translations,{"Adminbereiche":"Admin sections","Adminbereich": "Admin Panel", "Proxy-Anfragen": "Proxy requests", "Ticket erstellen": "Create Ticket", "Betreff": "Subject", "Kategorie": "Category", "Problem": "Problem", "Idee": "Idea", "Wunsch": "Wish", "Sonstiges": "Other", "Ticket senden": "Submit ticket", "Ticket erstellt. Vielen Dank!": "Ticket created. Thank you!", "Ticket konnte nicht erstellt werden. Bitte erneut versuchen.": "Could not create ticket. Please try again.", "Keine Tickets gefunden.": "No tickets found.", "Tickets konnten nicht geladen werden.": "Could not load tickets.", "Betreff, Kategorie oder Absender suchen": "Search subject, category or requester", "Tickets durchsuchen": "Search tickets", "Benutzer durchsuchen": "Search users", "Proxy-Anfragen durchsuchen": "Search proxy requests", "Benutzer und alle eigenen Homepages löschen?": "Delete this user and all their homepages?", "Dieses Proxy-Ziel freigeben?": "Approve this proxy destination?", "Freigabe widerrufen? Bestehende Weboberflächen verlieren den Proxy-Zugriff.": "Revoke this approval? Existing web interfaces will lose proxy access.", "Diese Anfrage endgültig entfernen?": "Permanently remove this request?", "Benutzer konnte nicht gelöscht werden.": "Could not delete user.", "Entscheidung konnte nicht gespeichert werden.": "Could not save decision.", "Tier 0: 1 Homepage · Tier 1: 3 · Tier 2: 5 · Tier 3: 10": "Tier 0: 1 homepage · Tier 1: 3 · Tier 2: 5 · Tier 3: 10"});
 const reverse=Object.fromEntries(Object.entries(translations).map(([de,en])=>[en,de]));
 const placeholderReverse=Object.fromEntries(Object.entries(placeholders).map(([de,en])=>[en,de]));
 const readLanguage=()=>{try{return localStorage.getItem('agms-language')==='de'?'de':'en'}catch{return'en'}};
 let language=readLanguage(),busy=false,scheduled=false;
-const originalText=new WeakMap(),originalAttrs=new WeakMap();
+window.agmsTranslate=text=>language==='de'?(reverse[text]||text):(translations[text]||text);
+const originalText=new WeakMap(),lastText=new WeakMap(),originalAttrs=new WeakMap();
 const skip=node=>node.parentElement?.closest('script,style,textarea,code,pre,[data-agms-i18n-ignore]')||false;
 function translateText(node){
  if(skip(node))return;
  const value=node.nodeValue||'',trim=value.trim();
  if(!trim)return;
  let source=originalText.get(node);
- if(source===undefined){source=reverse[trim]||trim;originalText.set(node,source)}
+ if(source===undefined||lastText.get(node)!==trim){source=reverse[trim]||trim;originalText.set(node,source)}
  const result=language==='de'?source:(translations[source]||source);
  if(trim!==result)node.nodeValue=value.replace(trim,result);
+ lastText.set(node,result);
 }
 function translateAttributes(element){
  if(element.closest('[data-agms-i18n-ignore]'))return;
