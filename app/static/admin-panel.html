@@ -36,7 +36,7 @@
 <div class="admin-scroll" id="proxyRequests"></div>
 </section>
 </div>
-<section class="admin-column" id="tickets-column" hidden><h2>Tickets</h2><input class="admin-search" id="ticketSearch" type="search" placeholder="Search subject, category or requester" aria-label="Search tickets"><div class="admin-scroll" id="tickets"></div></section><p id="status" role="status"></p>
+<section class="admin-column" id="tickets-column" hidden><h2>Tickets</h2><input class="admin-search" id="ticketSearch" type="search" placeholder="Search number, subject, category or requester" aria-label="Search tickets"><div class="admin-scroll" id="tickets"></div></section><p id="status" role="status"></p>
 </main>
 <script>
 const $=id=>document.getElementById(id);
@@ -124,15 +124,35 @@ function renderProxyRequests(){
 }
 $('accountSearch').addEventListener('input',renderAccounts);
 $('proxySearch').addEventListener('input',renderProxyRequests);
+const ticketDialog=document.createElement('dialog');
+ticketDialog.style.cssText='box-sizing:border-box;width:min(650px,calc(100vw - 32px));max-height:85vh;overflow:auto;border:1px solid #52647c;border-radius:14px;background:#101c2e;color:white;padding:24px';
+ticketDialog.setAttribute('aria-labelledby','ticketDetailTitle');
+const ticketContent=document.createElement('div');
+const closeTicket=button('Close',()=>ticketDialog.close());
+ticketDialog.append(ticketContent,closeTicket);document.body.append(ticketDialog);
+async function openTicket(ticket){
+ status('');
+ try{
+ const res=await fetch('/api/admin/tickets/'+encodeURIComponent(ticket.id));
+ if(!res.ok)throw Error('Could not load ticket.');
+ const detail=(await res.json()).ticket;
+ ticketContent.replaceChildren();
+ const title=document.createElement('h2');title.id='ticketDetailTitle';title.style.overflowWrap='anywhere';title.textContent='#'+detail.number+' · '+detail.subject;title.dataset.agmsI18nIgnore='';
+ const category=document.createElement('p');category.textContent={problem:'Problem',idea:'Idea',wish:'Wish',other:'Other'}[detail.category];
+ const author=document.createElement('p');author.textContent=(detail.email||detail.username)+' · '+new Date(detail.created_at*1000).toLocaleString();author.dataset.agmsI18nIgnore='';
+ const label=document.createElement('h3');label.textContent='Description';
+ const description=document.createElement('p');description.id='ticketDescription';description.textContent=detail.description||t('No description provided.');description.style.cssText='white-space:pre-wrap;overflow-wrap:anywhere';
+ if(detail.description)description.dataset.agmsI18nIgnore='';
+ ticketContent.append(title,category,author,label,description);ticketDialog.showModal();
+ }catch(e){status(e.message)}
+}
 function renderTickets(){
  const root=$('tickets');root.replaceChildren();
- const filtered=state.tickets.filter(ticket=>searchMatch([ticket.subject,ticket.category,ticket.username,ticket.email||''],$('ticketSearch').value));
+ const filtered=state.tickets.filter(ticket=>searchMatch([ticket.number,ticket.subject,ticket.category,ticket.username,ticket.email||''],$('ticketSearch').value));
  for(const ticket of filtered){
-  const card=document.createElement('article');card.className='widget';
-  const title=document.createElement('h3');title.textContent=ticket.subject;title.dataset.agmsI18nIgnore='';
-  const category=document.createElement('p');category.textContent={problem:'Problem',idea:'Idea',wish:'Wish',other:'Other'}[ticket.category];
-  const author=document.createElement('p');author.textContent=(ticket.email||ticket.username)+' · '+new Date(ticket.created_at*1000).toLocaleString();author.dataset.agmsI18nIgnore='';
-  card.append(title,category,author);root.append(card);
+  const row=button('#'+ticket.number+' · '+ticket.subject,()=>openTicket(ticket));
+  row.className='widget';row.dataset.agmsI18nIgnore='';row.style.cssText='text-align:left;width:100%;padding:16px;color:inherit;cursor:pointer;overflow-wrap:anywhere';
+  root.append(row);
  }
  if(!filtered.length)root.textContent='No tickets found.';
 }
@@ -153,4 +173,4 @@ document.querySelectorAll('[data-section]').forEach(button=>button.onclick=async
  document.querySelector('.admin-menu').hidden=true;status('Administrators only');
  }else{document.querySelector('.admin-menu').hidden=false;const section=location.hash.slice(1);const button=Array.from(document.querySelectorAll('[data-section]')).find(item=>item.dataset.section===section);if(button)button.click()}
 })().catch(()=>status('Administrators only'));
-</script><script src="/static/agms-i18n.js?v=20261014" defer></script></body></html>
+</script><script src="/static/agms-i18n.js?v=20261014b" defer></script></body></html>

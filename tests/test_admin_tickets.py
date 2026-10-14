@@ -36,6 +36,8 @@ class AdminTicketsTest(unittest.TestCase):
         self.client.cookies.set('csrf', 'test-csrf')
 
     def post(self, data, headers=None):
+        if isinstance(data, dict):
+            data = {'description': 'Detailed explanation\nSecond line', **data}
         return self.client.post('/api/tickets', json=data, headers=headers or {'Origin': main.ORIGIN, 'X-CSRF-Token': 'test-csrf'})
 
     def test_users_can_submit_all_categories_and_only_admins_can_read(self):
@@ -50,6 +52,15 @@ class AdminTicketsTest(unittest.TestCase):
         self.assertEqual(len(tickets), 12)
         self.assertEqual(tickets[0]['subject'], 'A subject <script>')
         self.assertIn('created_at', tickets[0])
+        self.assertEqual([t['number'] for t in tickets], list(range(12, 0, -1)))
+        self.assertNotIn('description', tickets[0])
+        detail=self.client.get('/api/admin/tickets/'+tickets[0]['id']).json()['ticket']
+        self.assertEqual(detail['description'], 'Detailed explanation\nSecond line')
+        self.assertEqual(detail['number'], tickets[0]['number'])
+        self.login('user@example.test')
+        self.assertEqual(self.client.get('/api/admin/tickets/'+tickets[0]['id']).status_code, 403)
+        self.login(main.ADMIN)
+        self.assertEqual(self.client.get('/api/admin/tickets/missing').status_code, 404)
         # A second administrator is authorized by role, not configured username.
         self.login('second-admin@example.test')
         for path in ['/api/admin/tickets', '/api/admin/accounts', '/api/admin/proxy-requests']:
@@ -64,9 +75,10 @@ class AdminTicketsTest(unittest.TestCase):
         self.assertEqual(self.client.post('/api/tickets', content='{', headers={'Origin': main.ORIGIN, 'X-CSRF-Token': 'test-csrf', 'Content-Type': 'application/json'}).status_code, 400)
         for headers in [{'Origin': main.ORIGIN}, {'Origin': 'http://attacker.test', 'X-CSRF-Token': 'test-csrf'}]:
             self.assertEqual(self.post({'subject': 'Test', 'category': 'problem'}, headers).status_code, 403)
-        for data in [{'subject': ' ', 'category': 'problem'}, {'subject': 'x'*201, 'category': 'problem'}, {'subject': 42, 'category': 'idea'}, {'subject': 'Test', 'category': 'invalid'}, {'subject': 'Test', 'category': []}, [], {}]:
+        for data in [{'subject': ' ', 'category': 'problem'}, {'subject': 'x'*201, 'category': 'problem'}, {'subject': 42, 'category': 'idea'}, {'subject': 'Test', 'category': 'invalid'}, {'subject': 'Test', 'category': []}, {'subject': 'Test', 'category': 'idea', 'description': ' '}, {'subject': 'Test', 'category': 'idea', 'description': None}, {'subject': 'Test', 'category': 'idea', 'description': 'x'*10001}, [], {}]:
             self.assertEqual(self.post(data).status_code, 400)
-        self.assertEqual(self.post({'subject': 'x'*200, 'category': 'other'}).status_code, 201)
+        self.assertEqual(self.post({'subject': 'x'*200, 'category': 'other', 'description': 'x'*10000}).status_code, 201)
+        self.assertEqual(self.client.post('/api/tickets', json={'subject': 'Test', 'category': 'idea'}, headers={'Origin': main.ORIGIN, 'X-CSRF-Token': 'test-csrf'}).status_code, 400)
 
     def test_admin_roles_cannot_be_deleted_or_overwritten_by_tier_changes(self):
         self.login(main.ADMIN)
@@ -83,6 +95,23 @@ class AdminTicketsTest(unittest.TestCase):
         main.init()
         with main.connect() as db:
             self.assertEqual(db.execute('SELECT subject FROM support_tickets').fetchone()[0], 'Persistent ticket')
+        response=self.post({'subject': 'Second ticket', 'category': 'problem'})
+        self.assertEqual(response.json()['number'], 2)
+
+    def test_legacy_tickets_receive_stable_numbers_without_data_loss(self):
+        with main.connect() as db:
+            db.execute('DROP TABLE support_ticket_numbers')
+            db.execute('DROP TABLE support_tickets')
+            db.execute("CREATE TABLE support_tickets(id TEXT PRIMARY KEY,username TEXT NOT NULL,subject TEXT NOT NULL,category TEXT NOT NULL,created_at INTEGER NOT NULL DEFAULT (unixepoch()))")
+            db.execute("INSERT INTO support_tickets VALUES ('legacy',?,'Existing ticket','idea',100)",(main.ADMIN,))
+        main.init()
+        main.init()
+        self.login(main.ADMIN)
+        detail=self.client.get('/api/admin/tickets/legacy').json()['ticket']
+        self.assertEqual(detail['number'], 1)
+        self.assertEqual(detail['subject'], 'Existing ticket')
+        self.assertEqual(detail['description'], '')
+        self.assertEqual(self.post({'subject': 'New ticket', 'category': 'wish'}).json()['number'], 2)
 
 
 if __name__ == '__main__':

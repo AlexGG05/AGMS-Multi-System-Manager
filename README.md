@@ -115,7 +115,7 @@ docker compose up -d --build
 
 ### Admin Panel and tickets
 
-The homepage sidebar offers **Create Ticket** to signed-in users. Tickets contain a subject (1–200 characters) and a category: Problem, Idea, Wish or Other. They are stored in SQLite.
+The homepage sidebar offers **Create Ticket** to signed-in users. Tickets receive a sequential ticket number and contain a subject (1–200 characters), a description (1–10,000 characters) and a category: Problem, Idea, Wish or Other. They are stored in SQLite. The ticket overview shows number and subject; selecting a ticket opens its description and details.
 
 Accounts with the `admin` role can open **Admin Panel**, then select **Proxy requests**, **Users** or **Tickets**. Administrative APIs enforce that role server-side. English is the default language; the language selector switches the interface to German.
 

@@ -50,6 +50,14 @@ def install(db):
       category TEXT NOT NULL CHECK(category IN ('problem','idea','wish','other')),
       created_at INTEGER NOT NULL DEFAULT (unixepoch())
     )""")
+    if "description" not in {row[1] for row in db.execute("PRAGMA table_info(support_tickets)").fetchall()}:
+        db.execute("ALTER TABLE support_tickets ADD COLUMN description TEXT NOT NULL DEFAULT ''")
+    db.execute("""CREATE TABLE IF NOT EXISTS support_ticket_numbers (
+      number INTEGER PRIMARY KEY AUTOINCREMENT, ticket_id TEXT NOT NULL UNIQUE
+    )""")
+    db.execute("""INSERT OR IGNORE INTO support_ticket_numbers(ticket_id)
+      SELECT id FROM support_tickets t WHERE NOT EXISTS
+      (SELECT 1 FROM support_ticket_numbers n WHERE n.ticket_id=t.id) ORDER BY created_at,id""")
     db.execute("CREATE TABLE IF NOT EXISTS proxy_allowed_origins (origin TEXT PRIMARY KEY, approved_by TEXT NOT NULL, created_at INTEGER NOT NULL DEFAULT (unixepoch()))")
     db.execute("CREATE TABLE IF NOT EXISTS proxy_requests (origin TEXT PRIMARY KEY, requested_by TEXT NOT NULL, created_at INTEGER NOT NULL DEFAULT (unixepoch()), status TEXT NOT NULL DEFAULT 'pending')")
     if "rejection_reason" not in {row[1] for row in db.execute("PRAGMA table_info(proxy_requests)").fetchall()}:
@@ -96,22 +104,33 @@ def router(connect, require, csrf, serializer, secure, origin):
         except (ValueError,UnicodeDecodeError):
             raise HTTPException(400,"Invalid ticket JSON")
         if not isinstance(body,dict): raise HTTPException(400,"Invalid ticket")
-        subject=body.get("subject");category=body.get("category")
+        subject=body.get("subject");category=body.get("category");description=body.get("description")
         if not isinstance(subject,str) or not 1<=len(subject.strip())<=200:
             raise HTTPException(400,"Subject must be 1-200 characters")
         if not isinstance(category,str) or category not in ("problem","idea","wish","other"):
             raise HTTPException(400,"Invalid ticket category")
+        if not isinstance(description,str) or not 1<=len(description.strip())<=10000:
+            raise HTTPException(400,"Description must be 1-10000 characters")
         ident=secrets.token_hex(12)
         with connect() as db:
-            db.execute("INSERT INTO support_tickets(id,username,subject,category) VALUES(?,?,?,?)",(ident,username,subject.strip(),category))
-        return {"id":ident}
+            db.execute("INSERT INTO support_tickets(id,username,subject,category,description) VALUES(?,?,?,?,?)",(ident,username,subject.strip(),category,description.strip()))
+            number=db.execute("INSERT INTO support_ticket_numbers(ticket_id) VALUES(?)",(ident,)).lastrowid
+        return {"id":ident,"number":number}
 
     @api.get("/api/admin/tickets")
     def tickets(request:Request):
         require_admin(request)
         with connect() as db:
-            rows=db.execute("SELECT t.*,p.email FROM support_tickets t LEFT JOIN account_profiles p ON p.username=t.username ORDER BY t.created_at DESC,t.id DESC").fetchall()
+            rows=db.execute("SELECT t.id,n.number,t.username,t.subject,t.category,t.created_at,p.email FROM support_tickets t JOIN support_ticket_numbers n ON n.ticket_id=t.id LEFT JOIN account_profiles p ON p.username=t.username ORDER BY n.number DESC").fetchall()
         return {"tickets":[dict(row) for row in rows]}
+
+    @api.get("/api/admin/tickets/{ticket_id}")
+    def ticket_detail(request:Request,ticket_id:str):
+        require_admin(request)
+        with connect() as db:
+            row=db.execute("SELECT t.*,n.number,p.email FROM support_tickets t JOIN support_ticket_numbers n ON n.ticket_id=t.id LEFT JOIN account_profiles p ON p.username=t.username WHERE t.id=?",(ticket_id,)).fetchone()
+        if not row: raise HTTPException(404,"Ticket not found")
+        return {"ticket":dict(row)}
 
     def membership(db, wsid, username, edit=False, owner=False):
         row=db.execute("SELECT role FROM workspace_members WHERE workspace_id=? AND username=?", (wsid,username)).fetchone()
@@ -558,6 +577,7 @@ def router(connect, require, csrf, serializer, secure, origin):
             db.execute("DELETE FROM workspace_notifications WHERE username=?",(username,))
             db.execute("DELETE FROM account_tokens WHERE username=?",(username,))
             db.execute("DELETE FROM account_security WHERE username=?",(username,))
+            db.execute("DELETE FROM support_ticket_numbers WHERE ticket_id IN (SELECT id FROM support_tickets WHERE username=?)",(username,))
             db.execute("DELETE FROM support_tickets WHERE username=?",(username,))
             db.execute("DELETE FROM account_profiles WHERE username=?",(username,))
             db.execute("DELETE FROM users WHERE username=?",(username,))
