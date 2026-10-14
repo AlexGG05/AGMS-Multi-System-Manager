@@ -297,6 +297,7 @@ async def legacy_admin_boundary(request:Request, call_next):
         or path.startswith("/api/workspaces")
         or path.startswith("/api/notifications")
         or path=="/api/tickets"
+        or path.startswith("/api/tickets/")
         or path.startswith("/api/admin/tickets")
         or path.startswith("/api/admin/accounts")
         or path.startswith("/api/admin/proxy-requests")

@@ -98,6 +98,60 @@ class AdminTicketsTest(unittest.TestCase):
         response=self.post({'subject': 'Second ticket', 'category': 'problem'})
         self.assertEqual(response.json()['number'], 2)
 
+    def test_ticket_workflow_notifications_and_comment_access(self):
+        self.login('user@example.test')
+        ticket_id=self.post({'subject': 'Workflow', 'category': 'problem'}).json()['id']
+        path='/api/tickets/'+ticket_id
+        headers={'Origin': main.ORIGIN, 'X-CSRF-Token': 'test-csrf'}
+        self.assertEqual(self.client.get(path).json()['ticket']['status'], 'open')
+        self.assertFalse(self.client.get(path).json()['can_comment'])
+        self.assertEqual(self.client.post(path+'/comments',headers=headers,json={'comment':'Too early'}).status_code,403)
+        self.assertEqual(len(self.client.get('/api/tickets').json()['tickets']),1)
+        self.login('premium@example.test')
+        self.assertEqual(self.client.get(path).status_code,404)
+        self.assertEqual(self.client.post(path+'/comments',headers=headers,json={'comment':'Intrusion'}).status_code,404)
+        self.assertEqual(self.client.get('/api/tickets').json()['tickets'],[])
+        self.login(main.ADMIN)
+        notes=self.client.get('/api/notifications').json()['notifications']
+        self.assertEqual(notes[0]['ticket_id'],ticket_id)
+        self.assertEqual(notes[0]['ticket_event'],'created')
+        status_path='/api/admin/tickets/'+ticket_id+'/status'
+        self.assertEqual(self.client.put(status_path,headers=headers,json={'status':'waiting_for_feedback'}).status_code,400)
+        self.assertEqual(self.client.put(status_path,headers=headers,json={'status':'invalid'}).status_code,400)
+        self.assertEqual(self.client.put(status_path,headers={'Origin':main.ORIGIN},json={'status':'in_progress'}).status_code,403)
+        for invalid in ['', ' ', None, 4, 'x'*10001]:
+            self.assertEqual(self.client.post(path+'/comments',headers=headers,json={'comment':invalid}).status_code,400)
+        self.assertEqual(self.client.put(status_path,headers=headers,json={'status':'in_progress'}).status_code,200)
+        self.assertEqual(self.client.post(path+'/comments',headers=headers,json={'comment':'Which browser?'}).status_code,201)
+        self.assertEqual(self.client.put(status_path,headers=headers,json={'status':'waiting_for_feedback'}).status_code,200)
+        self.assertEqual(self.client.put(status_path,headers=headers,json={'status':'waiting_for_feedback'}).status_code,200)
+        self.login('user@example.test')
+        notes=self.client.get('/api/notifications').json()['notifications']
+        self.assertEqual(len(notes),1)
+        self.assertEqual(notes[0]['ticket_comment'],'Which browser?')
+        self.assertTrue(self.client.get(path).json()['can_comment'])
+        self.assertEqual(self.client.put(status_path,headers=headers,json={'status':'resolved'}).status_code,403)
+        self.assertEqual(self.client.post(path+'/comments',headers={'Origin':main.ORIGIN},json={'comment':'Chrome'}).status_code,403)
+        self.assertEqual(self.client.post(path+'/comments',headers=headers,json={'comment':'Chrome'}).status_code,201)
+        self.assertEqual(self.client.get(path).json()['ticket']['status'],'in_progress')
+        self.assertFalse(self.client.get(path).json()['can_comment'])
+        self.login(main.ADMIN)
+        notes=self.client.get('/api/notifications').json()['notifications']
+        replies=[n for n in notes if n['ticket_event']=='reply']
+        self.assertEqual(replies[0]['ticket_comment'],'Chrome')
+        self.assertEqual(self.client.post(path+'/comments',headers=headers,json={'comment':'Fixed the problem.'}).status_code,201)
+        self.assertEqual(self.client.put(status_path,headers=headers,json={'status':'resolved'}).status_code,200)
+        self.login('user@example.test')
+        notes=self.client.get('/api/notifications').json()['notifications']
+        solved=[n for n in notes if n['ticket_event']=='resolved'][0]
+        self.assertEqual(solved['ticket_comment'],'Fixed the problem.')
+        waiting=[n for n in notes if n['ticket_event']=='waiting_for_feedback'][0]
+        self.assertEqual(waiting['ticket_comment'],'Which browser?')
+        self.assertEqual(self.client.get(path).json()['comments'][-1]['body'],'Fixed the problem.')
+        self.assertEqual(self.client.post(path+'/comments',headers=headers,json={'comment':'New reply'}).status_code,403)
+        self.client.cookies.clear()
+        self.assertEqual(self.client.get(path).status_code,401)
+
     def test_legacy_tickets_receive_stable_numbers_without_data_loss(self):
         with main.connect() as db:
             db.execute('DROP TABLE support_ticket_numbers')

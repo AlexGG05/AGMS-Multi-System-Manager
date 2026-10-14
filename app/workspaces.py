@@ -58,6 +58,17 @@ def install(db):
     db.execute("""INSERT OR IGNORE INTO support_ticket_numbers(ticket_id)
       SELECT id FROM support_tickets t WHERE NOT EXISTS
       (SELECT 1 FROM support_ticket_numbers n WHERE n.ticket_id=t.id) ORDER BY created_at,id""")
+    if "status" not in {row[1] for row in db.execute("PRAGMA table_info(support_tickets)").fetchall()}:
+        db.execute("ALTER TABLE support_tickets ADD COLUMN status TEXT NOT NULL DEFAULT 'open'")
+    db.execute("""CREATE TABLE IF NOT EXISTS support_ticket_comments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, ticket_id TEXT NOT NULL,
+      username TEXT NOT NULL, body TEXT NOT NULL, created_at INTEGER NOT NULL DEFAULT (unixepoch())
+    )""")
+    db.execute("CREATE INDEX IF NOT EXISTS ticket_comments_ticket ON support_ticket_comments(ticket_id,id)")
+    notification_columns={row[1] for row in db.execute("PRAGMA table_info(workspace_notifications)")}
+    for name in ("ticket_id","ticket_event","ticket_comment"):
+        if name not in notification_columns:
+            db.execute("ALTER TABLE workspace_notifications ADD COLUMN "+name+" TEXT")
     db.execute("CREATE TABLE IF NOT EXISTS proxy_allowed_origins (origin TEXT PRIMARY KEY, approved_by TEXT NOT NULL, created_at INTEGER NOT NULL DEFAULT (unixepoch()))")
     db.execute("CREATE TABLE IF NOT EXISTS proxy_requests (origin TEXT PRIMARY KEY, requested_by TEXT NOT NULL, created_at INTEGER NOT NULL DEFAULT (unixepoch()), status TEXT NOT NULL DEFAULT 'pending')")
     if "rejection_reason" not in {row[1] for row in db.execute("PRAGMA table_info(proxy_requests)").fetchall()}:
@@ -115,22 +126,88 @@ def router(connect, require, csrf, serializer, secure, origin):
         with connect() as db:
             db.execute("INSERT INTO support_tickets(id,username,subject,category,description) VALUES(?,?,?,?,?)",(ident,username,subject.strip(),category,description.strip()))
             number=db.execute("INSERT INTO support_ticket_numbers(ticket_id) VALUES(?)",(ident,)).lastrowid
+            notify_ticket_admins(db,ident,username,"created","New ticket received")
         return {"id":ident,"number":number}
 
     @api.get("/api/admin/tickets")
     def tickets(request:Request):
         require_admin(request)
         with connect() as db:
-            rows=db.execute("SELECT t.id,n.number,t.username,t.subject,t.category,t.created_at,p.email FROM support_tickets t JOIN support_ticket_numbers n ON n.ticket_id=t.id LEFT JOIN account_profiles p ON p.username=t.username ORDER BY n.number DESC").fetchall()
+            rows=db.execute("SELECT t.id,n.number,t.username,t.subject,t.category,t.status,t.created_at,p.email FROM support_tickets t JOIN support_ticket_numbers n ON n.ticket_id=t.id LEFT JOIN account_profiles p ON p.username=t.username ORDER BY n.number DESC").fetchall()
+        return {"tickets":[dict(row) for row in rows]}
+
+    def ticket_record(db,ticket_id):
+        row=db.execute("SELECT t.*,n.number,p.email FROM support_tickets t JOIN support_ticket_numbers n ON n.ticket_id=t.id LEFT JOIN account_profiles p ON p.username=t.username WHERE t.id=?",(ticket_id,)).fetchone()
+        if not row: raise HTTPException(404,"Ticket not found")
+        return dict(row)
+
+    def is_admin(db,username):
+        return bool(db.execute("SELECT 1 FROM account_profiles WHERE username=? AND role='admin'",(username,)).fetchone())
+
+    def authorized_ticket(db,ticket_id,username):
+        ticket=ticket_record(db,ticket_id)
+        admin=is_admin(db,username)
+        if not admin and ticket["username"]!=username: raise HTTPException(404,"Ticket not found")
+        return ticket,admin
+
+    def notify_ticket(db,ticket_id,recipient,event,message,comment=""):
+        db.execute("INSERT INTO workspace_notifications(id,username,message,ticket_id,ticket_event,ticket_comment) VALUES(?,?,?,?,?,?)",(secrets.token_hex(12),recipient,message,ticket_id,event,comment))
+
+    def notify_ticket_admins(db,ticket_id,sender,event,message,comment=""):
+        for row in db.execute("SELECT username FROM account_profiles WHERE role='admin'").fetchall():
+            if event=="created" or row["username"]!=sender: notify_ticket(db,ticket_id,row["username"],event,message,comment)
+
+    @api.get("/api/tickets")
+    def own_tickets(request:Request):
+        username=identity(request)
+        with connect() as db:
+            rows=db.execute("SELECT t.id,n.number,t.subject,t.status,t.category,t.created_at FROM support_tickets t JOIN support_ticket_numbers n ON n.ticket_id=t.id WHERE t.username=? ORDER BY n.number DESC",(username,)).fetchall()
         return {"tickets":[dict(row) for row in rows]}
 
     @api.get("/api/admin/tickets/{ticket_id}")
+    @api.get("/api/tickets/{ticket_id}")
     def ticket_detail(request:Request,ticket_id:str):
-        require_admin(request)
+        username=identity(request)
+        if request.url.path.startswith("/api/admin/"): require_admin(request)
         with connect() as db:
-            row=db.execute("SELECT t.*,n.number,p.email FROM support_tickets t JOIN support_ticket_numbers n ON n.ticket_id=t.id LEFT JOIN account_profiles p ON p.username=t.username WHERE t.id=?",(ticket_id,)).fetchone()
-        if not row: raise HTTPException(404,"Ticket not found")
-        return {"ticket":dict(row)}
+            ticket,admin=authorized_ticket(db,ticket_id,username)
+            comments=db.execute("SELECT c.*,COALESCE(NULLIF(p.display_name,''),p.email,c.username) author FROM support_ticket_comments c LEFT JOIN account_profiles p ON p.username=c.username WHERE c.ticket_id=? ORDER BY c.id",(ticket_id,)).fetchall()
+        return {"ticket":ticket,"comments":[dict(row) for row in comments],"can_manage":admin,"can_comment":admin or ticket["status"]=="waiting_for_feedback"}
+
+    async def ticket_body(request):
+        try: body=await request.json()
+        except (ValueError,UnicodeDecodeError): raise HTTPException(400,"Invalid ticket JSON")
+        if not isinstance(body,dict): raise HTTPException(400,"Invalid ticket JSON")
+        return body
+
+    @api.post("/api/tickets/{ticket_id}/comments",status_code=201)
+    async def ticket_comment(request:Request,ticket_id:str):
+        username=identity(request);csrf(request);body=await ticket_body(request)
+        comment=body.get("comment")
+        if not isinstance(comment,str) or not 1<=len(comment.strip())<=10000: raise HTTPException(400,"Comment must be 1-10000 characters")
+        with connect() as db:
+            ticket,admin=authorized_ticket(db,ticket_id,username)
+            if not admin and ticket["status"]!="waiting_for_feedback": raise HTTPException(403,"This ticket is not waiting for feedback")
+            db.execute("INSERT INTO support_ticket_comments(ticket_id,username,body) VALUES(?,?,?)",(ticket_id,username,comment.strip()))
+            if not admin:
+                db.execute("UPDATE support_tickets SET status='in_progress' WHERE id=?",(ticket_id,))
+                notify_ticket_admins(db,ticket_id,username,"reply","Ticket reply received",comment.strip())
+        return {"ok":True}
+
+    @api.put("/api/admin/tickets/{ticket_id}/status")
+    async def ticket_status(request:Request,ticket_id:str):
+        username=require_admin(request);csrf(request);body=await ticket_body(request)
+        status=body.get("status")
+        if not isinstance(status,str) or status not in ("open","in_progress","resolved","waiting_for_feedback"): raise HTTPException(400,"Invalid ticket status")
+        with connect() as db:
+            ticket=ticket_record(db,ticket_id)
+            if status==ticket["status"]: return {"ok":True}
+            if status in ("resolved","waiting_for_feedback"):
+                last=db.execute("SELECT body FROM support_ticket_comments WHERE ticket_id=? ORDER BY id DESC LIMIT 1",(ticket_id,)).fetchone()
+                if not last: raise HTTPException(400,"Add a comment before requesting feedback or resolving a ticket")
+                notify_ticket(db,ticket_id,ticket["username"],status,"Ticket resolved" if status=="resolved" else "More information is needed for your ticket",last["body"])
+            db.execute("UPDATE support_tickets SET status=? WHERE id=?",(status,ticket_id))
+        return {"ok":True}
 
     def membership(db, wsid, username, edit=False, owner=False):
         row=db.execute("SELECT role FROM workspace_members WHERE workspace_id=? AND username=?", (wsid,username)).fetchone()
@@ -292,7 +369,9 @@ def router(connect, require, csrf, serializer, secure, origin):
     def notifications(request:Request):
         username=identity(request)
         with connect() as db:
-            rows=db.execute("SELECT id,workspace_id,message,created_at FROM workspace_notifications WHERE username=? AND read_at IS NULL ORDER BY created_at DESC LIMIT 30",(username,)).fetchall()
+            rows=db.execute("""SELECT id,workspace_id,message,created_at,ticket_id,ticket_event,ticket_comment,
+                       (SELECT number FROM support_ticket_numbers WHERE ticket_id=workspace_notifications.ticket_id) ticket_number,
+                       (SELECT subject FROM support_tickets WHERE id=workspace_notifications.ticket_id) ticket_subject FROM workspace_notifications WHERE username=? AND read_at IS NULL ORDER BY created_at DESC LIMIT 30""",(username,)).fetchall()
         return {"notifications":[dict(x) for x in rows]}
     @api.post("/api/notifications/{nid}/read")
     def notification_read(request:Request,nid:str):
@@ -577,6 +656,8 @@ def router(connect, require, csrf, serializer, secure, origin):
             db.execute("DELETE FROM workspace_notifications WHERE username=?",(username,))
             db.execute("DELETE FROM account_tokens WHERE username=?",(username,))
             db.execute("DELETE FROM account_security WHERE username=?",(username,))
+            db.execute("DELETE FROM support_ticket_comments WHERE ticket_id IN (SELECT id FROM support_tickets WHERE username=?)",(username,))
+            db.execute("DELETE FROM workspace_notifications WHERE ticket_id IN (SELECT id FROM support_tickets WHERE username=?)",(username,))
             db.execute("DELETE FROM support_ticket_numbers WHERE ticket_id IN (SELECT id FROM support_tickets WHERE username=?)",(username,))
             db.execute("DELETE FROM support_tickets WHERE username=?",(username,))
             db.execute("DELETE FROM account_profiles WHERE username=?",(username,))
