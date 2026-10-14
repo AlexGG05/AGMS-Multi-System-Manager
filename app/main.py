@@ -70,6 +70,17 @@ def home(request: Request):
     page = "workspaces.html" if username else "index.html"
     return FileResponse(Path(__file__).parent/"static"/page, headers={"Cache-Control":"no-store, no-cache, must-revalidate","Pragma":"no-cache","Vary":"Cookie"})
 
+@app.get("/webui/{wsid}/{itemid}/", response_class=HTMLResponse)
+def webui_home(request:Request,wsid:str,itemid:str):
+    username=user(request)
+    if username:
+        with connect() as db:
+            row=db.execute("SELECT m.role,n.min_role,n.url FROM workspace_members m JOIN workspace_navigation n ON n.workspace_id=m.workspace_id WHERE m.workspace_id=? AND m.username=? AND n.id=?",(wsid,username,itemid)).fetchone()
+        order={"viewer":0,"editor":1,"owner":2}
+        if not row or not row["url"] or order.get(row["role"],-1)<order.get(row["min_role"],99):
+            raise HTTPException(404,"WebUI not found")
+    return home(request)
+
 @app.get("/api/me")
 def me(request:Request):
     return {"username":user(request)}

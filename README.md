@@ -126,3 +126,13 @@ python -m unittest discover -s tests -v
 ```
 
 The tests use an isolated temporary SQLite database and do not need external integrations.
+
+### Bitwarden/Vaultwarden inside embedded WebUIs
+
+Embedded services now open at separate AGMS addresses (`/webui/<workspace>/<item>/`). These links restore the correct service after login or reload and enforce workspace membership and the WebUI's minimum role.
+
+Bitwarden browser 2026.9.3 selects inline-menu login suggestions using the outer tab's URL, not solely the iframe URL ([official source](https://github.com/bitwarden/clients/blob/browser-v2026.9.3/apps/browser/src/autofill/background/overlay.background.ts#L583)). A proxy additionally changes the iframe's URL to an AGMS URL.
+
+Open a service and choose **Password manager setup** in its toolbar. Add the displayed website and AGMS URLs to that service's existing vault entry, using **Starts with** URI matching for each. For a proxied service, also add the displayed proxy URL. Keep the trailing slash, which separates each service's address. Configure each service independently; avoid matching every service to the entire AGMS domain.
+
+AGMS neither reads nor stores vault credentials. The extension still controls field detection, site permissions and whether its inline menu appears. The AGMS routes, copied URLs and iframe/proxy restoration were browser-tested with fixture login pages; the user's installed Bitwarden extension and live remote login pages were not tested from the cloud environment.
