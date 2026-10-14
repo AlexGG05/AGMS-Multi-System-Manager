@@ -1,4 +1,4 @@
-# CodeX Homelab v1 — Raspberry Pi 4B
+# AGMS — Multi System Manager
 
 Lightweight, self-hosted homelab dashboard. Runs on Raspberry Pi OS 64-bit (ARM64) with Docker Compose.
 
@@ -29,7 +29,7 @@ The UI deliberately labels inventory counts separately from live metrics. Do not
 sudo apt update
 sudo apt install -y docker.io docker-compose-plugin openssl
 sudo systemctl enable --now docker
-git clone YOUR_REPOSITORY_URL codex-homelab
+git clone https://github.com/AlexGG05/AGMS-Multi-System-Manager.git codex-homelab
 cd codex-homelab
 cp .env.example .env
 openssl rand -hex 32
@@ -136,3 +136,5 @@ Bitwarden browser 2026.9.3 selects inline-menu login suggestions using the outer
 Open a service and choose **Password manager setup** in its toolbar. Add the displayed website and AGMS URLs to that service's existing vault entry, using **Starts with** URI matching for each. For a proxied service, also add the displayed proxy URL. Keep the trailing slash, which separates each service's address. Configure each service independently; avoid matching every service to the entire AGMS domain.
 
 AGMS neither reads nor stores vault credentials. The extension still controls field detection, site permissions and whether its inline menu appears. The AGMS routes, copied URLs and iframe/proxy restoration were browser-tested with fixture login pages; the user's installed Bitwarden extension and live remote login pages were not tested from the cloud environment.
+
+The ARM64 workflow publishes `ghcr.io/alexgg05/agms-multi-system-manager:latest` and also retains the previous `codex-agrosskopf-dashboard:latest` tag for existing installations. Switch Compose to the new image only after the GitHub Actions build succeeds. Keep the existing Compose project name and data volume when updating.

@@ -1,8 +1,8 @@
 # In Arcane select your Raspberry Pi environment and create a Compose project.
-# Replace YOUR_GITHUB_USERNAME and REPOSITORY with your lowercase GitHub names.
+# Published ARM64 image for AlexGG05/AGMS-Multi-System-Manager.
 services:
   dashboard:
-    image: ghcr.io/YOUR_GITHUB_USERNAME/codex-agrosskopf-dashboard:latest
+    image: ghcr.io/alexgg05/agms-multi-system-manager:latest
     platform: linux/arm64
     restart: unless-stopped
     ports:

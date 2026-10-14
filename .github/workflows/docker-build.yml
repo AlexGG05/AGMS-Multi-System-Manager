@@ -39,4 +39,6 @@ jobs:
           file: ./Dockerfile
           platforms: linux/arm64
           push: true
-          tags: ghcr.io/alexgg05/codex-agrosskopf-dashboard:latest
+          tags: |
+            ghcr.io/alexgg05/agms-multi-system-manager:latest
+            ghcr.io/alexgg05/codex-agrosskopf-dashboard:latest
