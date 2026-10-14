@@ -5,7 +5,7 @@ async function api(path,method='GET',body){const r=await fetch(path,{method,cred
 let restoringWebUi=false;
 let workspaces=[],workspace=null,items=[],role='viewer',tier=0,selectedGroup=null,editing=false,workspaceLocked=false;
 const notify=message=>$('notice').textContent=message;
-function panels(id){if(id!=='framePanel'){setFrameExpanded(false);if(!restoringWebUi&&location.pathname.startsWith('/webui/'))history.replaceState(null,'','/');}for(const key of ['homePanel','framePanel','editorPanel','teamPanel'])$(key).hidden=key!==id}
+function panels(id){if(id!=='framePanel'){setFrameExpanded(false);if(!restoringWebUi&&location.pathname.startsWith('/webui/'))history.replaceState(null,'','/');}$('showHome').classList.toggle('active',id==='homePanel');$('showStatus').classList.toggle('active',id==='statusPanel');for(const key of ['homePanel','framePanel','editorPanel','teamPanel','statusPanel'])$(key).hidden=key!==id}
 function maxHomes(){return tier===3?10:tier===2?5:tier===1?3:1}
 async function init(){const route=location.pathname.match(/^\/webui\/([^/]+)\/([^/]+)\/$/);restoringWebUi=true;try{const data=await api('/api/workspaces');workspaces=data.workspaces;tier=data.tier;$('tierLabel').textContent=data.account_role==='admin'?'Administrator':tier?'Tier '+tier:'Free · 1 Homepage';$('premiumLink').hidden=data.account_role!=='admin';$('workspaceSelect').replaceChildren(...workspaces.map(w=>{const option=document.createElement('option');option.value=w.id;option.textContent=w.name;return option}));if(!workspaces.length){notify('Erstelle deine erste Homepage.');panels('homePanel');return}const stored=localStorage.getItem('codex-active-homepage');await openWorkspace((route&&workspaces.find(w=>w.id===decodeURIComponent(route[1]))?.id)||workspaces.find(w=>w.id===stored)?.id||workspaces[0].id);restoringWebUi=false;if(route){const item=items.find(n=>n.id===decodeURIComponent(route[2])&&n.url);if(item){selectedGroup=item.parent_id||null;openFrame(item)}else{notify('WebUI not found');history.replaceState(null,'','/')}}await showNotifications();loadProfileBadge()}catch(e){notify(e.message)}finally{restoringWebUi=false}}
 async function loadProfileBadge(){try{const p=await api('/api/account/profile');$('profileName').textContent=p.display_name||'Profil';if(p.avatar)$('profileAvatar').src=p.avatar}catch(e){console.warn('Profil konnte nicht geladen werden',e)}}
@@ -145,3 +145,8 @@ init();
 
 setInterval(showNotifications,30000);
 window.addEventListener('agms-ticket-updated',showNotifications);
+
+$('showStatus').onclick=()=>{panels('statusPanel');$('breadcrumb').textContent='STATUS';$('pageTitle').textContent='Status overview';window.agmsShowStatus()};
+$('reportServiceIssue').onclick=()=>{const route=location.pathname.match(/^\/webui\/([^/]+)\/([^/]+)\/$/);if(route)window.agmsCreateTicket({workspace_id:decodeURIComponent(route[1]),service_id:decodeURIComponent(route[2])}).catch(e=>notify(e.message))};
+window.agmsOpenSearchGroup=async(wsid,id)=>{$('agmsSearch').value='';await openWorkspace(wsid);showGroup(id)};
+window.addEventListener('agms-notification-settings-updated',showNotifications);

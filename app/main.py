@@ -1,4 +1,4 @@
-import os, sqlite3, secrets, time, json, re
+import os, sqlite3, secrets, time, json, re, asyncio, logging
 from pathlib import Path
 from urllib.parse import urlparse
 import bcrypt, httpx
@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 from .inventory import GROUPS
 from .arcane import get_arcane, manage_container
-from . import integrations, workspaces, web_proxy
+from . import integrations, workspaces, web_proxy, features
 
 DB = "/data/homelab.sqlite3"
 SECRET = os.environ.get("SESSION_SECRET", "")
@@ -36,6 +36,28 @@ def init():
         if not db.execute("SELECT 1 FROM users WHERE username=?", (ADMIN,)).fetchone():
             db.execute("INSERT INTO users VALUES (?,?)", (ADMIN, bcrypt.hashpw(PASSWORD.encode(), bcrypt.gensalt()).decode()))
         workspaces.install(db)
+
+@app.on_event("startup")
+async def start_notification_worker():
+    async def retry_emails():
+        while True:
+            await asyncio.sleep(features.EMAIL_POLL_INTERVAL)
+            if os.getenv("SMTP_PASSWORD"):
+                try:
+                    await asyncio.to_thread(features.deliver_pending,connect)
+                except sqlite3.Error as exc:
+                    logging.getLogger(__name__).warning("Notification email retry deferred: %s",type(exc).__name__)
+    app.state.notification_worker=asyncio.create_task(retry_emails())
+
+@app.on_event("shutdown")
+async def stop_notification_worker():
+    worker=getattr(app.state,"notification_worker",None)
+    if worker:
+        worker.cancel()
+        try:
+            await worker
+        except asyncio.CancelledError:
+            pass
 
 def user(request):
     cookie = request.cookies.get("session", "")
@@ -307,6 +329,7 @@ async def legacy_admin_boundary(request:Request, call_next):
         path in ("/api/login","/api/logout","/api/me","/api/register","/api/account/verify","/api/account/forgot-password","/api/account/reset-password")
         or path.startswith("/api/workspaces")
         or path.startswith("/api/notifications")
+        or path in ("/api/services","/api/search","/api/notification-settings")
         or path=="/api/tickets"
         or path.startswith("/api/tickets/")
         or path.startswith("/api/admin/tickets")

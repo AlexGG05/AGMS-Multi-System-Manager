@@ -17,8 +17,9 @@ function statusIndicator(item,container){
  const indicator=make('span','● Prüfe …','agms-status');container.append(indicator);
  const key=workspace.id+':'+item.id;
  function show(data){
-  indicator.classList.remove('agms-online','agms-offline');
+  indicator.classList.remove('agms-online','agms-offline','agms-degraded');
   if(data.status==='online'){indicator.textContent='● Online';indicator.classList.add('agms-online')}
+  else if(data.status==='degraded'){indicator.textContent='● Degraded';indicator.classList.add('agms-degraded')}
   else if(data.status==='offline'){indicator.textContent='● Offline';indicator.classList.add('agms-offline')}
   else{indicator.textContent='● Nicht prüfbar';indicator.title=data.reason==='private'?'Interne oder private Adressen werden aus Sicherheitsgründen nicht geprüft':'Der Status dieses Dienstes kann nicht ermittelt werden'}
  }

@@ -138,3 +138,13 @@ Open a service and choose **Password manager setup** in its toolbar. Add the dis
 AGMS neither reads nor stores vault credentials. The extension still controls field detection, site permissions and whether its inline menu appears. The AGMS routes, copied URLs and iframe/proxy restoration were browser-tested with fixture login pages; the user's installed Bitwarden extension and live remote login pages were not tested from the cloud environment.
 
 The ARM64 workflow publishes `ghcr.io/alexgg05/agms-multi-system-manager:latest` and also retains the previous `codex-agrosskopf-dashboard:latest` tag for existing installations. Switch Compose to the new image only after the GitHub Actions build succeeds. Keep the existing Compose project name and data volume when updating.
+
+### Ticket tools, search and service status
+
+- **Report a problem** in a WebUI's toolbar preselects that service. The ticket stores its title and URL as context. Administrators can set priority and assign an administrator.
+- Attach up to three PNG, JPEG or WebP screenshots per submission (2 MB each, at most ten per ticket). Screenshots are stored in SQLite and are only accessible to the creator and administrators. They can also accompany a feedback reply. A reverse proxy must allow the application's maximum 9 MB ticket request size; for Nginx, configure an appropriate `client_max_body_size`, such as `10m`.
+- **Search everything** (or Ctrl/Cmd+K on the dashboard) searches permitted services, groups and ticket subjects/numbers across homepages. Normal users see their own tickets; administrators can search all tickets.
+- **Notification settings** are available in the sidebar and the bell menu. Bell categories can be switched independently. Ticket emails default to off and require configured SMTP and a verified email address. Email language can be English or German. Failed delivery is queued for up to five attempts, with a five-minute retry delay; ticket actions and bell notifications remain available. SMTP delivery was verified with mocked success/failure, not a live mail server.
+- **Status overview** is a separate left-navigation tab, with homepage/search filters and refresh controls. Public destinations are checked from the AGMS server with TLS verification; HTTP 5xx responses are marked Degraded. Private addresses and unsupported ports remain Not checked. This reports reachability rather than deep application health. Status requests use at most four concurrent checks, with a short browser cache.
+
+Existing users, ticket numbers, descriptions and comments are preserved by additive SQLite migrations. No additional Compose volume or dependency is required.

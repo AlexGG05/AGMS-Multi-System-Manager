@@ -1,5 +1,5 @@
 (()=>{
-const dialog=document.createElement('dialog');dialog.id='passwordManagerDialog';dialog.setAttribute('aria-labelledby','passwordManagerTitle');dialog.style.cssText='box-sizing:border-box;width:min(650px,calc(100vw - 32px));max-height:85vh;overflow:auto;border:1px solid #52647c;border-radius:14px;background:#101c2e;color:white;padding:24px';document.body.append(dialog);
+const dialog=document.createElement('dialog');dialog.id='passwordManagerDialog';dialog.setAttribute('aria-labelledby','passwordManagerTitle');dialog.className='agms-dialog agms-dialog-inner';document.body.append(dialog);
 const text=(tag,value)=>{const node=document.createElement(tag);node.textContent=value;return node};
 window.agmsPasswordManagerSetup=({website,tab,frame})=>{
  dialog.replaceChildren();const title=text('h2','Password manager setup');title.id='passwordManagerTitle';

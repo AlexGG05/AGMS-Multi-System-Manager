@@ -2,9 +2,10 @@
 import os, re, json, time, secrets, hashlib, sqlite3, socket, ssl, ipaddress, asyncio, base64, binascii
 from urllib.parse import urlparse
 import bcrypt
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Request, HTTPException, BackgroundTasks
 from fastapi.responses import JSONResponse
 from .mailer import send_email
+from . import features
 
 EMAIL = re.compile(r"^[^\s@]{1,64}@[^\s@]{1,190}\.[^\s@]{2,}$")
 ROLES = {"owner", "editor", "viewer"}
@@ -91,6 +92,8 @@ def install(db):
     db.execute("INSERT OR IGNORE INTO account_security(username,verified_at,tier) SELECT username,unixepoch(),0 FROM users WHERE username=?", (os.getenv("ADMIN_USERNAME","admin"),))
     db.execute("INSERT OR IGNORE INTO account_profiles(username,email,role) SELECT username, CASE WHEN instr(username,'@')>0 THEN lower(username) ELSE NULL END, 'admin' FROM users WHERE username=?", (os.getenv("ADMIN_USERNAME","admin"),))
 
+    features.install(db)
+
 def router(connect, require, csrf, serializer, secure, origin):
     api = APIRouter()
     def identity(request):
@@ -108,13 +111,12 @@ def router(connect, require, csrf, serializer, secure, origin):
         return username
 
     @api.post("/api/tickets", status_code=201)
-    async def create_ticket(request:Request):
+    async def create_ticket(request:Request,background_tasks:BackgroundTasks):
         username=identity(request);csrf(request)
-        try:
-            body=await request.json()
-        except (ValueError,UnicodeDecodeError):
-            raise HTTPException(400,"Invalid ticket JSON")
-        if not isinstance(body,dict): raise HTTPException(400,"Invalid ticket")
+        body=await features.json_body(request)
+        files=features.images(body)
+        priority=body.get("priority","normal")
+        if not isinstance(priority,str) or priority not in features.PRIORITIES: raise HTTPException(400,"Invalid priority")
         subject=body.get("subject");category=body.get("category");description=body.get("description")
         if not isinstance(subject,str) or not 1<=len(subject.strip())<=200:
             raise HTTPException(400,"Subject must be 1-200 characters")
@@ -124,16 +126,19 @@ def router(connect, require, csrf, serializer, secure, origin):
             raise HTTPException(400,"Description must be 1-10000 characters")
         ident=secrets.token_hex(12)
         with connect() as db:
-            db.execute("INSERT INTO support_tickets(id,username,subject,category,description) VALUES(?,?,?,?,?)",(ident,username,subject.strip(),category,description.strip()))
+            service=features.ticket_service(db,username,body)
+            db.execute("INSERT INTO support_tickets(id,username,subject,category,description,priority,workspace_id,service_id,service_title,service_url) VALUES(?,?,?,?,?,?,?,?,?,?)",(ident,username,subject.strip(),category,description.strip(),priority,*service))
+            features.store_images(db,ident,files)
             number=db.execute("INSERT INTO support_ticket_numbers(ticket_id) VALUES(?)",(ident,)).lastrowid
             notify_ticket_admins(db,ident,username,"created","New ticket received")
+        background_tasks.add_task(features.deliver_pending,connect)
         return {"id":ident,"number":number}
 
     @api.get("/api/admin/tickets")
     def tickets(request:Request):
         require_admin(request)
         with connect() as db:
-            rows=db.execute("SELECT t.id,n.number,t.username,t.subject,t.category,t.status,t.created_at,p.email FROM support_tickets t JOIN support_ticket_numbers n ON n.ticket_id=t.id LEFT JOIN account_profiles p ON p.username=t.username ORDER BY n.number DESC").fetchall()
+            rows=db.execute("SELECT t.id,n.number,t.username,t.subject,t.category,t.status,t.priority,t.assigned_to,t.service_title,t.created_at,p.email FROM support_tickets t JOIN support_ticket_numbers n ON n.ticket_id=t.id LEFT JOIN account_profiles p ON p.username=t.username ORDER BY n.number DESC").fetchall()
         return {"tickets":[dict(row) for row in rows]}
 
     def ticket_record(db,ticket_id):
@@ -151,7 +156,9 @@ def router(connect, require, csrf, serializer, secure, origin):
         return ticket,admin
 
     def notify_ticket(db,ticket_id,recipient,event,message,comment=""):
-        db.execute("INSERT INTO workspace_notifications(id,username,message,ticket_id,ticket_event,ticket_comment) VALUES(?,?,?,?,?,?)",(secrets.token_hex(12),recipient,message,ticket_id,event,comment))
+        notification_id=secrets.token_hex(12)
+        db.execute("INSERT INTO workspace_notifications(id,username,message,ticket_id,ticket_event,ticket_comment) VALUES(?,?,?,?,?,?)",(notification_id,recipient,message,ticket_id,event,comment))
+        features.queue_email(db,notification_id,recipient)
 
     def notify_ticket_admins(db,ticket_id,sender,event,message,comment=""):
         for row in db.execute("SELECT username FROM account_profiles WHERE role='admin'").fetchall():
@@ -161,7 +168,7 @@ def router(connect, require, csrf, serializer, secure, origin):
     def own_tickets(request:Request):
         username=identity(request)
         with connect() as db:
-            rows=db.execute("SELECT t.id,n.number,t.subject,t.status,t.category,t.created_at FROM support_tickets t JOIN support_ticket_numbers n ON n.ticket_id=t.id WHERE t.username=? ORDER BY n.number DESC",(username,)).fetchall()
+            rows=db.execute("SELECT t.id,n.number,t.subject,t.status,t.category,t.priority,t.service_title,t.created_at FROM support_tickets t JOIN support_ticket_numbers n ON n.ticket_id=t.id WHERE t.username=? ORDER BY n.number DESC",(username,)).fetchall()
         return {"tickets":[dict(row) for row in rows]}
 
     @api.get("/api/admin/tickets/{ticket_id}")
@@ -172,41 +179,51 @@ def router(connect, require, csrf, serializer, secure, origin):
         with connect() as db:
             ticket,admin=authorized_ticket(db,ticket_id,username)
             comments=db.execute("SELECT c.*,COALESCE(NULLIF(p.display_name,''),p.email,c.username) author FROM support_ticket_comments c LEFT JOIN account_profiles p ON p.username=c.username WHERE c.ticket_id=? ORDER BY c.id",(ticket_id,)).fetchall()
-        return {"ticket":ticket,"comments":[dict(row) for row in comments],"can_manage":admin,"can_comment":admin or ticket["status"]=="waiting_for_feedback"}
-
-    async def ticket_body(request):
-        try: body=await request.json()
-        except (ValueError,UnicodeDecodeError): raise HTTPException(400,"Invalid ticket JSON")
-        if not isinstance(body,dict): raise HTTPException(400,"Invalid ticket JSON")
-        return body
+            attachments=db.execute("SELECT id,filename,content_type,length(content) size FROM ticket_attachments WHERE ticket_id=? ORDER BY created_at,id",(ticket_id,)).fetchall()
+        return {"attachments":[dict(row) for row in attachments],"ticket":ticket,"comments":[dict(row) for row in comments],"can_manage":admin,"can_comment":admin or ticket["status"]=="waiting_for_feedback"}
 
     @api.post("/api/tickets/{ticket_id}/comments",status_code=201)
-    async def ticket_comment(request:Request,ticket_id:str):
-        username=identity(request);csrf(request);body=await ticket_body(request)
+    async def ticket_comment(request:Request,ticket_id:str,background_tasks:BackgroundTasks):
+        username=identity(request);csrf(request);body=await features.json_body(request)
+        files=features.images(body)
         comment=body.get("comment")
         if not isinstance(comment,str) or not 1<=len(comment.strip())<=10000: raise HTTPException(400,"Comment must be 1-10000 characters")
         with connect() as db:
+            db.execute("BEGIN IMMEDIATE")
             ticket,admin=authorized_ticket(db,ticket_id,username)
             if not admin and ticket["status"]!="waiting_for_feedback": raise HTTPException(403,"This ticket is not waiting for feedback")
+            features.store_images(db,ticket_id,files)
             db.execute("INSERT INTO support_ticket_comments(ticket_id,username,body) VALUES(?,?,?)",(ticket_id,username,comment.strip()))
             if not admin:
                 db.execute("UPDATE support_tickets SET status='in_progress' WHERE id=?",(ticket_id,))
                 notify_ticket_admins(db,ticket_id,username,"reply","Ticket reply received",comment.strip())
+        background_tasks.add_task(features.deliver_pending,connect)
         return {"ok":True}
 
     @api.put("/api/admin/tickets/{ticket_id}/status")
-    async def ticket_status(request:Request,ticket_id:str):
-        username=require_admin(request);csrf(request);body=await ticket_body(request)
+    async def ticket_status(request:Request,ticket_id:str,background_tasks:BackgroundTasks):
+        username=require_admin(request);csrf(request);body=await features.json_body(request)
         status=body.get("status")
         if not isinstance(status,str) or status not in ("open","in_progress","resolved","waiting_for_feedback"): raise HTTPException(400,"Invalid ticket status")
+        files=features.images(body)
+        comment=body.get("comment")
+        if comment is not None and (not isinstance(comment,str) or not 1<=len(comment.strip())<=10000): raise HTTPException(400,"Comment must be 1-10000 characters")
+        if files and comment is None: raise HTTPException(400,"Please enter a comment.")
         with connect() as db:
+            db.execute("BEGIN IMMEDIATE")
             ticket=ticket_record(db,ticket_id)
-            if status==ticket["status"]: return {"ok":True}
-            if status in ("resolved","waiting_for_feedback"):
+            priority=body.get("priority",ticket["priority"])
+            assigned=body.get("assigned_to",ticket["assigned_to"])
+            if not isinstance(priority,str) or priority not in features.PRIORITIES or (assigned is not None and (not isinstance(assigned,str) or not is_admin(db,assigned))): raise HTTPException(400,"Invalid ticket assignment")
+            if comment is not None:
+                features.store_images(db,ticket_id,files)
+                db.execute("INSERT INTO support_ticket_comments(ticket_id,username,body) VALUES(?,?,?)",(ticket_id,username,comment.strip()))
+            if status!=ticket["status"] and status in ("resolved","waiting_for_feedback"):
                 last=db.execute("SELECT body FROM support_ticket_comments WHERE ticket_id=? ORDER BY id DESC LIMIT 1",(ticket_id,)).fetchone()
                 if not last: raise HTTPException(400,"Add a comment before requesting feedback or resolving a ticket")
                 notify_ticket(db,ticket_id,ticket["username"],status,"Ticket resolved" if status=="resolved" else "More information is needed for your ticket",last["body"])
-            db.execute("UPDATE support_tickets SET status=? WHERE id=?",(status,ticket_id))
+            db.execute("UPDATE support_tickets SET status=?,priority=?,assigned_to=? WHERE id=?",(status,priority,assigned,ticket_id))
+        background_tasks.add_task(features.deliver_pending,connect)
         return {"ok":True}
 
     def membership(db, wsid, username, edit=False, owner=False):
@@ -366,12 +383,14 @@ def router(connect, require, csrf, serializer, secure, origin):
             db.execute("UPDATE workspaces SET name=? WHERE id=?",(name,wsid))
         return {"ok":True,"name":name}
     @api.get("/api/notifications")
-    def notifications(request:Request):
+    def notifications(request:Request,background_tasks:BackgroundTasks):
         username=identity(request)
         with connect() as db:
+            prefs=features.preferences(db,username)
             rows=db.execute("""SELECT id,workspace_id,message,created_at,ticket_id,ticket_event,ticket_comment,
                        (SELECT number FROM support_ticket_numbers WHERE ticket_id=workspace_notifications.ticket_id) ticket_number,
-                       (SELECT subject FROM support_tickets WHERE id=workspace_notifications.ticket_id) ticket_subject FROM workspace_notifications WHERE username=? AND read_at IS NULL ORDER BY created_at DESC LIMIT 30""",(username,)).fetchall()
+                       (SELECT subject FROM support_tickets WHERE id=workspace_notifications.ticket_id) ticket_subject FROM workspace_notifications WHERE username=? AND read_at IS NULL AND ((ticket_id IS NOT NULL AND ?) OR (ticket_id IS NULL AND ?)) ORDER BY created_at DESC LIMIT 30""",(username,prefs["ticket_bell"],prefs["other_bell"])).fetchall()
+        background_tasks.add_task(features.deliver_pending,connect)
         return {"notifications":[dict(x) for x in rows]}
     @api.post("/api/notifications/{nid}/read")
     def notification_read(request:Request,nid:str):
@@ -442,7 +461,10 @@ def router(connect, require, csrf, serializer, secure, origin):
                     request_line="HEAD "+path+" HTTP/1.1\r\nHost: "+host_header+"\r\nConnection: close\r\nUser-Agent: AGMS-Status/1.0\r\n\r\n"
                     sock.sendall(request_line.encode("utf-8"))
                     response=sock.recv(256)
-                    if response.startswith(b"HTTP/"):return {"status":"online"}
+                    match=re.match(br"HTTP/\d(?:\.\d)? ([0-9]{3})",response)
+                    if match:
+                        code=int(match.group(1))
+                        return {"status":"degraded" if code>=500 else "online","http_status":code}
                     return {"status":"unknown"}
                 finally:sock.close()
             except (OSError,ssl.SSLError,ValueError,UnicodeError):
@@ -645,6 +667,7 @@ def router(connect, require, csrf, serializer, secure, origin):
         with connect() as db:
             if not db.execute("SELECT 1 FROM users WHERE username=?",(username,)).fetchone(): raise HTTPException(404,"Account not found")
             if db.execute("SELECT 1 FROM account_profiles WHERE username=? AND role='admin'",(username,)).fetchone(): raise HTTPException(400,"Admin account cannot be deleted")
+            db.execute("DELETE FROM notification_email_outbox WHERE notification_id IN (SELECT id FROM workspace_notifications WHERE username=? OR ticket_id IN (SELECT id FROM support_tickets WHERE username=?))",(username,username))
             owned=[x[0] for x in db.execute("SELECT id FROM workspaces WHERE owner=?",(username,)).fetchall()]
             for wsid in owned:
                 db.execute("DELETE FROM workspace_notifications WHERE workspace_id=?",(wsid,))
@@ -656,6 +679,8 @@ def router(connect, require, csrf, serializer, secure, origin):
             db.execute("DELETE FROM workspace_notifications WHERE username=?",(username,))
             db.execute("DELETE FROM account_tokens WHERE username=?",(username,))
             db.execute("DELETE FROM account_security WHERE username=?",(username,))
+            db.execute("DELETE FROM notification_preferences WHERE username=?",(username,))
+            db.execute("DELETE FROM ticket_attachments WHERE ticket_id IN (SELECT id FROM support_tickets WHERE username=?)",(username,))
             db.execute("DELETE FROM support_ticket_comments WHERE ticket_id IN (SELECT id FROM support_tickets WHERE username=?)",(username,))
             db.execute("DELETE FROM workspace_notifications WHERE ticket_id IN (SELECT id FROM support_tickets WHERE username=?)",(username,))
             db.execute("DELETE FROM support_ticket_numbers WHERE ticket_id IN (SELECT id FROM support_tickets WHERE username=?)",(username,))
@@ -675,4 +700,5 @@ def router(connect, require, csrf, serializer, secure, origin):
             db.execute("INSERT INTO account_security(username,tier) VALUES(?,?) ON CONFLICT(username) DO UPDATE SET tier=excluded.tier",(username,level))
             db.execute("UPDATE account_profiles SET role=? WHERE username=?",("premium" if level else "user",username))
         return {"ok":True,"tier":level}
+    api.include_router(features.router(connect,identity,csrf,require_admin,authorized_ticket,is_admin))
     return api
