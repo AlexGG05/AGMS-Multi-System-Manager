@@ -12,6 +12,14 @@
     if (input.startsWith(prefix + '/') || input === prefix) return input;
     if (input.startsWith('/') && !input.startsWith('//')) return prefix + input;
     if (upstream && (input === upstream || input.startsWith(upstream + '/'))) return prefix + input.slice(upstream.length);
+    // Socket.IO polling builds absolute URLs using the iframe's current origin.
+    // Those must stay in this WebUI's namespace, just like root-relative URLs.
+    try {
+      const url = new URL(input);
+      if (url.origin === window.location.origin && url.pathname !== prefix && !url.pathname.startsWith(prefix + '/')) {
+        return prefix + url.pathname + url.search + url.hash;
+      }
+    } catch (_) {}
     return input;
   }
   const fetchOriginal = window.fetch.bind(window);

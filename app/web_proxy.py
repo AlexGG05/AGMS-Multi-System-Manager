@@ -18,7 +18,8 @@ from fastapi.responses import Response
 router = APIRouter()
 HOP = {"host", "connection", "transfer-encoding", "content-length", "content-encoding",
        "accept-encoding", "cookie", "authorization", "proxy-authorization", "forwarded",
-       "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto", "origin", "referer"}
+       "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto", "origin", "referer",
+       "if-none-match", "if-modified-since"}
 STRIP = {"content-security-policy", "content-security-policy-report-only", "x-frame-options",
          "content-length", "transfer-encoding", "content-encoding", "set-cookie", "location",
          "access-control-allow-origin", "clear-site-data"}
@@ -54,6 +55,15 @@ def rewrite_markup(text, upstream, prefix):
     text = re.sub(r'''(?i)(<base\b[^>]*\bhref\s*=\s*)(["'])/(\2)''',
                   lambda m: m.group(1) + m.group(2) + prefix + "/" + m.group(3), text)
     return text
+
+def kuma_router_base(markup, prefix):
+    """Only Kuma's SPA needs an explicit Vue Router base in the proxy namespace."""
+    if not re.search(r"(?is)<title>\s*Uptime\s+Kuma\s*</title>", markup):
+        return markup
+    base = '<base href="' + escape(prefix + '/', quote=True) + '">'
+    markup = re.sub(r'(?is)<base\b[^>]*>', '', markup)
+    return re.sub(r'(?is)(<head(?:\s[^>]*)?>)', lambda m: m[1] + base, markup, count=1)
+
 
 def setup(connect, require):
     @router.websocket("/web-proxy/{wsid}/{itemid}/{path:path}")
@@ -174,9 +184,13 @@ def setup(connect, require):
         if "text/html" in ctype or "text/css" in ctype:
             markup = rewrite_markup(data.decode("utf-8", errors="replace"), origin, prefix)
             if "text/html" in ctype:
-                # Preserve the application's document base. Injecting a new <base>
-                # changes relative forms, navigation and resources in unrelated apps.
-                shim = ('<script src="/static/proxy-shim.js" data-prefix="' + escape(prefix, quote=True) +
+                # Keep the workaround specific to Kuma; SABnzbd and other apps
+                # must retain their native relative form/navigation semantics.
+                markup = kuma_router_base(markup, prefix)
+                for header in ('etag', 'last-modified'):
+                    response_headers.pop(header, None)
+                response_headers['cache-control'] = 'no-store'
+                shim = ('<script src="/static/proxy-shim.js?v=20261015-kuma-router" data-prefix="' + escape(prefix, quote=True) +
                         '" data-upstream="' + escape(origin, quote=True) +
                         '" data-cookie-prefix="' + escape("agms_proxy_" + itemid + "_", quote=True) +
                         '"></script>')

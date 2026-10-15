@@ -74,3 +74,27 @@ class ProxyPathsTest(unittest.TestCase):
         from app.web_proxy import rewrite_markup
         markup='<form action="./"><button formaction="../logout/">Logout</button></form><script src="./app.js"></script>'
         self.assertEqual(rewrite_markup(markup,'https://example.test','/web-proxy/ws/item'),markup)
+
+    def test_kuma_base_is_scoped_and_html_cache_validators_are_removed(self):
+        from app.web_proxy import kuma_router_base
+        prefix='/web-proxy/webui-test/bookstack'
+        for title in ['SABnzbd','Arcane','BookStack']:
+            markup='<html><head><title>'+title+'</title></head><body><form action="./"></form></body></html>'
+            self.assertEqual(kuma_router_base(markup,prefix),markup)
+        self.login(main.ADMIN)
+        with main.connect() as db:
+            db.execute("INSERT INTO proxy_allowed_origins(origin,approved_by) VALUES ('https://example.test',?)",(main.ADMIN,))
+        upstream=httpx.Response(200,text='<html><head><title>Uptime Kuma</title></head><body></body></html>',headers={'content-type':'text/html','etag':'old-upstream-etag','last-modified':'Thu, 15 Oct 2026 08:00:00 GMT','cache-control':'public, max-age=3600'})
+        with patch('app.web_proxy.socket.getaddrinfo',return_value=[(2,1,6,'',('93.184.216.34',443))]),patch('app.web_proxy.httpx.AsyncClient') as client:
+            call=AsyncMock(return_value=upstream);client.return_value.__aenter__.return_value.request=call
+            response=self.client.get(prefix+'/dashboard',headers={'If-None-Match':'old-upstream-etag','If-Modified-Since':'Thu, 15 Oct 2026 08:00:00 GMT'})
+            self.assertEqual(response.status_code,200)
+            self.assertIn('<base href="'+prefix+'/">',response.text)
+            self.assertLess(response.text.index('<base '),response.text.index('</head>'))
+            self.assertEqual(response.headers['cache-control'],'no-store')
+            self.assertNotIn('etag',response.headers)
+            self.assertNotIn('last-modified',response.headers)
+            self.assertNotIn('if-none-match',call.call_args.kwargs['headers'])
+            self.assertNotIn('if-modified-since',call.call_args.kwargs['headers'])
+        markup='<html><head><title>Uptime Kuma</title><base href="/"></head></html>'
+        self.assertEqual(kuma_router_base(markup,prefix).count('<base '),1)
