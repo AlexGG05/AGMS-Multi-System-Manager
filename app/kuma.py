@@ -5,6 +5,7 @@ import json
 import re
 import socket
 import ssl
+import math
 from urllib.parse import urlsplit, quote
 from fastapi import APIRouter, HTTPException, Request
 
@@ -62,8 +63,11 @@ def read_page(value):
             for monitor in group.get('monitorList', []):
                 ident = str(monitor['id'])
                 history = pulse.get('heartbeatList', {}).get(ident, [])
+                history=history[-100:]
                 beat = history[-1] if history else {}
-                monitors.append({'id': ident, 'name': str(monitor.get('name', ident)), 'group': str(group.get('name', '')), 'status': {0:'offline', 1:'online', 2:'pending', 3:'maintenance'}.get(beat.get('status'), 'unknown'), 'time': beat.get('time'), 'uptime': pulse.get('uptimeList', {}).get(ident + '_24')})
+                states={0:'offline',1:'online',2:'pending',3:'maintenance'}
+                beats=[{'status':states.get(b.get('status'),'unknown'),'time':b.get('time') if isinstance(b.get('time'),str) else None,'ping':b.get('ping') if isinstance(b.get('ping'),(int,float)) and math.isfinite(b['ping']) else None} for b in history if isinstance(b,dict)]
+                monitors.append({'id': ident, 'name': str(monitor.get('name', ident)), 'group': str(group.get('name', '')), 'status': {0:'offline', 1:'online', 2:'pending', 3:'maintenance'}.get(beat.get('status'), 'unknown'), 'time': beat.get('time'), 'uptime': pulse.get('uptimeList', {}).get(ident + '_24'), 'heartbeats':beats})
         return {'monitors': monitors}
     except (OSError, ValueError, KeyError, TypeError, AttributeError, http.client.HTTPException):
         raise HTTPException(502, 'Cannot load Kuma. Use a published status page on a public address with a valid TLS certificate; redirects are not followed.')

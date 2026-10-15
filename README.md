@@ -8,7 +8,7 @@ Lightweight, self-hosted homelab dashboard. Runs on Raspberry Pi OS 64-bit (ARM6
 - Multi-user accounts, team roles, email verification/recovery and optional TOTP/passkeys
 - Administrator panel, support tickets, comments, screenshots, service context and notifications
 - Global search, configurable homepage widgets and English/German interface
-- Service reachability/history, dependencies, public certificate/domain expiry watches and Uptime Kuma pages
+- Service reachability, dependencies, public certificate/domain expiry watches and Uptime Kuma pages with native heartbeat strips
 - Homepage audit history and opt-in ntfy, Gotify, Telegram and Discord notifications
 - Optional API integrations for Proxmox, Arcane and TrueNAS; availability depends on configured endpoints/API compatibility
 - Persistent SQLite storage and ARM64 Docker deployment
@@ -210,20 +210,32 @@ single column.
 
 ### Monitoring and automatic refresh
 
-The **Monitoring** sidebar tab contains service-check history (24 hours, 7 or 30
-days), observed outage spans, service dependencies and certificate/domain expiry
-watches. The profile controls automatic refresh: disabled, 30 seconds, 1, 2 or 5
-minutes; the default is 1 minute. Checks run while the dashboard/status or
-monitoring page is visible. Editing a monitoring form pauses its automatic
+The **Monitoring** sidebar tab contains service dependencies and certificate/domain
+expiry watches. The profile controls automatic refresh: disabled, 30 seconds,
+1, 2 or 5 minutes; the default is 1 minute. Checks run while the dashboard/status
+or monitoring page is visible. Editing a monitoring form pauses its automatic
 refresh. Status requests use the existing public-address restrictions and TLS
-verification. At most one sample per service/minute is stored for 30 days.
-History starts with recorded checks; gaps are never treated as proven uptime.
+verification. The latest service check is retained for dependency indicators and
+summary widgets; the separate AGMS history screen/API has been removed.
+
+Kuma cards instead show the latest **up to 100 actual heartbeats** returned by
+Kuma's published status-page API, oldest to newest. Strips appear for individual
+monitors and for a monitor used as the card heading. Green means online, red
+offline, amber pending and blue maintenance; unknown is gray. Hover a segment for
+the source timestamp and latency where available. No local reachability samples
+or invented green segments are substituted for missing Kuma history.
+
 Dependencies are within a homepage, require editing rights and reject cycles.
 Only relationships between services visible to the viewer are returned.
 
 Certificate watches accept public HTTPS URLs. Domain watches use the public
 RDAP registry service (`rdap.org` and safely followed public HTTPS redirects).
-Not every registry publishes expiration dates. Unavailable/invalid TLS or registry
+Not every registry publishes expiration dates. In particular, `.de` domains do
+not publish a public expiry date, so AGMS displays a specific explanation instead
+of suggesting a connection failure. A **Registrar renewal date** can be entered
+or cleared on each domain card. That date is explicitly labelled manual, persists
+across checks and participates in the same 30-day bell/push warnings. Obtain it
+from the registrar account or invoice; it is not inferred from a TLS certificate. Unavailable/invalid TLS or registry
 responses show an explicit error instead of an invented date. Background checks
 run on due watches every six hours, and the bell/opt-in push channels warn within
 30 days of a known expiration. Manual checks are available in Monitoring.
@@ -290,6 +302,7 @@ executable, then run the fixture server and browser in separate terminals:
 
 ```bash
 python tests/serve_operations_fixture.py
+PLAYWRIGHT_MODULE=/path/to/node_modules/playwright CHROMIUM_PATH=/usr/bin/chromium node tests/browser_kuma_history.cjs
 PLAYWRIGHT_MODULE=/path/to/node_modules/playwright CHROMIUM_PATH=/usr/bin/chromium node tests/browser_operations.cjs
 PLAYWRIGHT_MODULE=/path/to/node_modules/playwright CHROMIUM_PATH=/usr/bin/chromium node tests/browser_refresh.cjs
 ```

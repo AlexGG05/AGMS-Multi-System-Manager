@@ -39,8 +39,9 @@ class KumaTest(unittest.TestCase):
     def test_kuma_groups_latest_heartbeat_and_unknown(self):
         with patch('app.kuma.public_json',side_effect=[{'publicGroupList':[{'name':'Hosts','monitorList':[{'id':12,'name':'Host A'},{'id':13,'name':'Host B'}]}]},{'heartbeatList':{'12':[{'status':0},{'status':1,'time':'now'}]},'uptimeList':{'12_24':0.99}}]):
             data=kuma.read_page('https://status.example/status/main')
-        self.assertEqual(data['monitors'][0],{'id':'12','name':'Host A','group':'Hosts','status':'online','time':'now','uptime':0.99})
+        self.assertEqual(data['monitors'][0],{'id':'12','name':'Host A','group':'Hosts','status':'online','time':'now','uptime':0.99,'heartbeats':[{'status':'offline','time':None,'ping':None},{'status':'online','time':'now','ping':None}]})
         self.assertEqual(data['monitors'][1]['status'],'unknown')
+        self.assertEqual(data['monitors'][1]['heartbeats'],[])
 
     def test_private_dns_blocked_before_socket_and_redirect_rejected(self):
         url,_,_=kuma.source('https://status.example/status/main')
@@ -50,3 +51,14 @@ class KumaTest(unittest.TestCase):
         with patch('app.kuma.public_json',side_effect=ValueError('redirect')):
             with self.assertRaises(HTTPException) as error:kuma.read_page('https://status.example/status/main')
             self.assertEqual(error.exception.status_code,502)
+
+    def test_recent_heartbeats_are_bounded_and_not_replaced_with_local_samples(self):
+        beats=[{'status':i%5,'time':str(i),'ping':float('nan') if i==119 else i} for i in range(120)]
+        with patch('app.kuma.public_json',side_effect=[{'publicGroupList':[{'name':'Group','monitorList':[{'id':1,'name':'Service'}]}]},{'heartbeatList':{'1':beats},'uptimeList':{}}]):
+            monitor=kuma.read_page('https://status.example/status/main')['monitors'][0]
+        self.assertEqual(len(monitor['heartbeats']),100)
+        self.assertEqual(monitor['heartbeats'][0]['time'],'20')
+        self.assertEqual(monitor['heartbeats'][-1]['time'],'119')
+        self.assertEqual(monitor['heartbeats'][-1]['status'],'unknown')
+        self.assertIsNone(monitor['heartbeats'][-1]['ping'])
+        self.assertIsNone(monitor['uptime'])

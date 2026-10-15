@@ -25,18 +25,18 @@ class OperationsTest(unittest.TestCase):
         self.assertIn('error',widgets['data']['sabnzbd'])
         self.login('premium@example.test');self.assertEqual(self.client.get('/api/account/preferences').json()['widgets'],[])
 
-    def test_history_acl_counts_and_retention(self):
+    def test_latest_service_checks_remain_private_without_history_api(self):
         self.seed_services();now=int(time.time())//60*60
         with main.connect() as db:
-            for i,status in enumerate(['online','offline','offline','online']):
-                db.execute('INSERT INTO service_history VALUES(?,?,?,?,NULL)',('shared','public',now-(3-i)*60,status))
+            db.execute('INSERT INTO service_history VALUES(?,?,?,?,NULL)',('shared','public',now-60,'offline'))
             operations.record(db,'shared','public',{'status':'online'})
-        self.login('user@example.test');data=self.client.get('/api/monitoring/history/shared/public').json()
-        self.assertEqual(data['samples'],4);self.assertEqual(data['counts']['offline'],2)
-        self.assertEqual(data['incidents'][0]['ended_at'],now)
-        self.assertEqual(self.client.get('/api/monitoring/history/shared/restricted').status_code,404)
-        self.assertEqual(self.client.get('/api/monitoring/history/shared/public?hours=999').status_code,400)
-        self.login('premium@example.test');self.assertEqual(self.client.get('/api/monitoring/history/shared/public').status_code,404)
+            self.assertEqual(db.execute("SELECT count(*) FROM service_history WHERE workspace_id='shared'").fetchone()[0],1)
+        self.login('user@example.test')
+        data=self.client.get('/api/monitoring').json()
+        self.assertEqual([s['id'] for s in data['services']],['public'])
+        self.assertEqual(data['services'][0]['latest']['status'],'online')
+        self.assertEqual(self.client.get('/api/monitoring/history/shared/public').status_code,404)
+        self.login('premium@example.test');self.assertEqual(self.client.get('/api/monitoring').json()['services'],[])
 
     def test_dependency_acl_cycles_and_audit(self):
         self.seed_services()
@@ -164,3 +164,28 @@ class OperationsTest(unittest.TestCase):
         self.assertEqual(response.status_code,200)
         response=self.client.post('/api/account/security/totp/setup',json={'password':password},headers={'Origin':main.ORIGIN,'X-CSRF-Token':self.client.cookies.get('csrf')})
         self.assertEqual(response.status_code,200)
+
+    def test_de_domain_manual_renewal_preserved_and_scoped(self):
+        with patch('app.operations.public_net.request') as request:
+            with self.assertRaises(operations.NoPublicExpiry):operations.check_watch('domain','agrosskopf.de')
+            request.assert_not_called()
+        self.login('user@example.test')
+        watch=self.client.post('/api/monitoring/watches',json={'kind':'domain','value':'agrosskopf.de','label':'Domain'},headers=self.headers()).json()['id']
+        operations.check_due_watches(main.connect,'user@example.test')
+        item=self.client.get('/api/monitoring').json()['watches'][0]
+        self.assertIn('.de',item['error']);self.assertIsNone(item['expires_at'])
+        self.assertEqual(self.client.put('/api/monitoring/watches/'+watch,json={'renewal_date':'2030-10-15'},headers=self.headers()).status_code,200)
+        with patch('app.operations.check_watch') as check:
+            operations.check_due_watches(main.connect,'user@example.test');check.assert_not_called()
+        main.init()
+        item=self.client.get('/api/monitoring').json()['watches'][0]
+        self.assertEqual(item['expires_at'],item['manual_expires_at']);self.assertIsNone(item['error'])
+        self.assertEqual(self.client.put('/api/monitoring/watches/'+watch,json={'renewal_date':'bad-date'},headers=self.headers()).status_code,400)
+        self.login('premium@example.test')
+        self.assertEqual(self.client.put('/api/monitoring/watches/'+watch,json={'renewal_date':'2031-01-01'},headers=self.headers()).status_code,404)
+        self.login('user@example.test')
+        self.assertEqual(self.client.put('/api/monitoring/watches/'+watch,json={'renewal_date':None},headers=self.headers()).status_code,200)
+
+    def test_registry_missing_expiration_is_not_a_connection_error(self):
+        with patch('app.operations.public_net.request',return_value={'events':[{'eventAction':'last changed','eventDate':'2025-01-01T00:00:00Z'}]}):
+            with self.assertRaises(operations.NoPublicExpiry):operations.check_watch('domain','example.com')

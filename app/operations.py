@@ -7,6 +7,7 @@ from fastapi import APIRouter,Request,HTTPException
 from . import public_net,security_keys
 
 DEFAULT={'refresh_seconds':60,'widgets':[]}
+DE_EXPIRY_NOTE='Public expiry dates are not published for .de domains. Enter the renewal date from your registrar.'
 
 
 def install(db):
@@ -21,6 +22,8 @@ def install(db):
     CREATE TABLE IF NOT EXISTS push_channels(username TEXT NOT NULL,provider TEXT NOT NULL,settings BLOB NOT NULL,enabled INTEGER NOT NULL DEFAULT 0,enabled_at INTEGER NOT NULL DEFAULT (unixepoch()),PRIMARY KEY(username,provider));
     CREATE TABLE IF NOT EXISTS push_outbox(notification_id TEXT NOT NULL,provider TEXT NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,next_attempt_at INTEGER NOT NULL DEFAULT 0,sent_at INTEGER,PRIMARY KEY(notification_id,provider));
     ''')
+    if 'manual_expires_at' not in {r[1] for r in db.execute('PRAGMA table_info(expiry_watches)')}:db.execute('ALTER TABLE expiry_watches ADD COLUMN manual_expires_at INTEGER')
+    db.execute("UPDATE expiry_watches SET error=?,expires_at=NULL WHERE kind='domain' AND manual_expires_at IS NULL AND lower(value) LIKE '%.de'",(DE_EXPIRY_NOTE,))
     security_keys.install(db)
 
 
@@ -36,8 +39,13 @@ def preferences(db,username):
 
 def record(db,workspace,service,result):
     stamp=int(time.time())//60*60
-    db.execute('INSERT OR IGNORE INTO service_history VALUES(?,?,?,?,?)',(workspace,service,stamp,result.get('status','unknown'),result.get('http_status')))
+    db.execute('DELETE FROM service_history WHERE workspace_id=? AND service_id=?',(workspace,service))
+    db.execute('INSERT INTO service_history VALUES(?,?,?,?,?)',(workspace,service,stamp,result.get('status','unknown'),result.get('http_status')))
     db.execute('DELETE FROM service_history WHERE checked_at<?',(stamp-30*86400,))
+
+
+class NoPublicExpiry(ValueError):
+    pass
 
 
 def check_watch(kind,value):
@@ -45,9 +53,10 @@ def check_watch(kind,value):
         url=public_net.endpoint(value)
         with public_net.connection(url) as sock:cert=sock.getpeercert()
         return int(ssl.cert_time_to_seconds(cert['notAfter']))
+    if value.lower().endswith('.de'):raise NoPublicExpiry(DE_EXPIRY_NOTE)
     data=public_net.request('https://rdap.org/domain/'+quote(value,safe=''),redirects=4)
     events=[e for e in data.get('events',[]) if e.get('eventAction')=='expiration']
-    if not events:raise ValueError('No expiration data published by registry')
+    if not events:raise NoPublicExpiry('The registry does not publish an expiry date. Enter the renewal date from your registrar.')
     return int(datetime.fromisoformat(events[0]['eventDate'].replace('Z','+00:00')).timestamp())
 
 
@@ -55,7 +64,8 @@ def check_due_watches(connect,force_user=None):
     with connect() as db:
         rows=db.execute('SELECT * FROM expiry_watches WHERE '+('username=?' if force_user else '(checked_at IS NULL OR checked_at<unixepoch()-21600)')+' LIMIT 30', (force_user,) if force_user else ()).fetchall()
     def inspect(row):
-        try:return check_watch(row['kind'],row['value']),None
+        try:return (row['manual_expires_at'] if row['manual_expires_at'] is not None else check_watch(row['kind'],row['value'])),None
+        except NoPublicExpiry as exc:return None,str(exc)
         except Exception:return None,'Could not verify expiry. Check address, TLS or registry availability.'
     with ThreadPoolExecutor(max_workers=4) as pool:results=list(pool.map(inspect,rows))
     for row,(expiry,error) in zip(rows,results):
@@ -101,28 +111,6 @@ def router(connect,identity,csrf,require_admin,workspace_editable=None):
             settings=preferences(db,username)
         return {'services':services,'dependencies':dependencies,'watches':watches,'preferences':settings,'now':int(time.time())}
 
-    @api.get('/api/monitoring/history/{workspace}/{service}')
-    def history(request:Request,workspace:str,service:str,hours:int=24):
-        username=identity(request)
-        if hours not in (24,168,720):raise HTTPException(400,'Choose 24 hours, 7 days or 30 days')
-        with connect() as db:
-            if not any(s['workspace_id']==workspace and s['id']==service and s['url'] for s in visible_services(db,username)):raise HTTPException(404,'Service not found')
-            rows=db.execute('SELECT * FROM service_history WHERE workspace_id=? AND service_id=? AND checked_at>=? ORDER BY checked_at',(workspace,service,int(time.time())-hours*3600)).fetchall()
-        # At most 240 representative points; calculate counts using all actual samples.
-        size=max(1,math.ceil(len(rows)/240));counts={k:sum(r['status']==k for r in rows) for k in ('online','offline','degraded','unknown')}
-        points=[dict(r) for r in rows[::size]]
-        if rows and points[-1]['checked_at']!=rows[-1]['checked_at']:points.append(dict(rows[-1]))
-        incidents=[];active=None
-        for r in rows:
-            if r['status'] in ('offline','degraded'):
-                if active is None or r['checked_at']-active['last_seen']>180:
-                    active={'started_at':r['checked_at'],'last_seen':r['checked_at'],'ended_at':None};incidents.append(active)
-                active['last_seen']=r['checked_at']
-            elif active is not None:
-                if r['status']=='online' and r['checked_at']-active['last_seen']<=180:active['ended_at']=r['checked_at']
-                active=None
-        return {'points':points,'counts':counts,'samples':len(rows),'incidents':incidents[-30:],'sampling_note':'Only actual checks are recorded. Gaps are not evidence of uptime.'}
-
     @api.put('/api/monitoring/dependencies')
     async def dependencies(request:Request):
         username=identity(request);csrf(request);body=await json_body(request);workspace=body.get('workspace_id');service=body.get('service_id');parents=body.get('depends_on')
@@ -160,6 +148,21 @@ def router(connect,identity,csrf,require_admin,workspace_editable=None):
             if db.execute('SELECT count(*) FROM expiry_watches WHERE username=?',(username,)).fetchone()[0]>=30:raise HTTPException(400,'Maximum 30 expiry watches')
             ident=secrets.token_hex(12);db.execute('INSERT INTO expiry_watches(id,username,kind,value,label) VALUES(?,?,?,?,?)',(ident,username,kind,value,label.strip()))
         return {'id':ident}
+
+    @api.put('/api/monitoring/watches/{ident}')
+    async def renewal_date(request:Request,ident:str):
+        username=identity(request);csrf(request);body=await json_body(request)
+        value=body.get('renewal_date')
+        try:
+            if value is not None and (not isinstance(value,str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2}',value)):raise ValueError()
+            expiry=int(datetime.strptime(value,'%Y-%m-%d').replace(tzinfo=timezone.utc).timestamp()) if value else None
+        except (ValueError,TypeError,OverflowError):raise HTTPException(400,'Enter a valid renewal date')
+        with connect() as db:
+            row=db.execute('SELECT * FROM expiry_watches WHERE id=? AND username=?',(ident,username)).fetchone()
+            if not row:raise HTTPException(404,'Expiry watch not found')
+            if row['kind']!='domain':raise HTTPException(400,'Manual dates are only available for domain renewals')
+            db.execute('UPDATE expiry_watches SET manual_expires_at=?,expires_at=?,checked_at=NULL,error=NULL WHERE id=?',(expiry,expiry,ident))
+        return {'ok':True}
 
     @api.delete('/api/monitoring/watches/{ident}')
     def remove_watch(request:Request,ident:str):
