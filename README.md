@@ -193,3 +193,9 @@ Changes are saved immediately for the current user and survive reloads. The grid
 uses the saved entry order, including entries with the same category name.
 The first/last position disables the corresponding button. If saving fails,
 the existing order remains visible and an error is displayed.
+
+Entire Kuma status-page cards can also be dragged using the **⠿** handle at the
+left of their heading. Drag onto another card to insert the entire page at that
+position, including its monitor list and header-monitor configuration. This
+works with mouse and touch; the destination is highlighted and the order is
+saved on release. The arrow buttons remain available for keyboard use.
