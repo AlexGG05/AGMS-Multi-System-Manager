@@ -7,7 +7,7 @@ import os
 import re
 import socket
 import ipaddress
-from html import escape, unescape
+from html import escape
 from urllib.parse import urlsplit, urlunsplit, urljoin
 import httpx
 import asyncio
@@ -40,22 +40,7 @@ def rewrite_location(location, upstream, prefix):
         return prefix + absolute[len(upstream):]
     return location
 
-def rewrite_markup(text, upstream, prefix, document_url=None):
-    # Resolve form targets before injecting a history base for SPA routers.
-    # SABnzbd's /login/ form posts to "./", which must stay /login/, not /.
-    if document_url:
-        base_match = re.search(r"""(?is)<base\b[^>]*\bhref\s*=\s*(?:["']([^"']*)["']|([^\s>]+))""", text)
-        effective_base = urljoin(document_url, unescape(base_match[1] if base_match[1] is not None else base_match[2])) if base_match else document_url
-        def form_target(value):
-            absolute = urljoin(effective_base, unescape(value))
-            if absolute == upstream or absolute.startswith(upstream + '/') or absolute.startswith(upstream + '?'):
-                return escape(prefix + absolute[len(upstream):], quote=True)
-            return escape(absolute, quote=True)
-        text = re.sub(r"""(?i)(\b(?:action|formaction)\s*=\s*)(["'])([^"']*)(\2)""",
-                      lambda m: m[1] + m[2] + form_target(m[3]) + m[4], text)
-        text = re.sub(r"""(?i)(\b(?:action|formaction)\s*=\s*)([^\s>"']+)""",
-                      lambda m: m[1] + '"' + form_target(m[2]) + '"', text)
-
+def rewrite_markup(text, upstream, prefix):
     # Rewrite root-relative links with or without attribute quotes.
     text = text.replace(upstream + "/", prefix + "/")
     text = re.sub(r'''(?i)(\b(?:href|src|action|poster)\s*=\s*)(["'])(/[^"']*)(\2)''',
@@ -187,14 +172,11 @@ def setup(connect, require):
         ctype = upstream.headers.get("content-type", "").lower()
         data = upstream.content
         if "text/html" in ctype or "text/css" in ctype:
-            markup = rewrite_markup(data.decode("utf-8", errors="replace"), origin, prefix, target if "text/html" in ctype else None)
+            markup = rewrite_markup(data.decode("utf-8", errors="replace"), origin, prefix)
             if "text/html" in ctype:
-                # Vue Router reads <base> when no explicit history base is set.
-                # Keep an application's own base (already rewritten above).
-                existing_base = re.search(r'(?is)<base\b[^>]*>', markup)
-                base_tag = existing_base.group(0) if existing_base else '<base href="' + escape(prefix + '/', quote=True) + '">'
-                markup = re.sub(r'(?is)<base\b[^>]*>', '', markup)
-                shim = (base_tag + '<script src="/static/proxy-shim.js" data-prefix="' + escape(prefix, quote=True) +
+                # Preserve the application's document base. Injecting a new <base>
+                # changes relative forms, navigation and resources in unrelated apps.
+                shim = ('<script src="/static/proxy-shim.js" data-prefix="' + escape(prefix, quote=True) +
                         '" data-upstream="' + escape(origin, quote=True) +
                         '" data-cookie-prefix="' + escape("agms_proxy_" + itemid + "_", quote=True) +
                         '"></script>')

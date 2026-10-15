@@ -61,8 +61,8 @@ class ProxyPathsTest(unittest.TestCase):
             client.return_value.__aenter__.return_value.request=AsyncMock(side_effect=upstream)
             prefix='/web-proxy/webui-test/bookstack'
             page=self.client.get(prefix+'/login/')
-            self.assertIn('action="'+prefix+'/login/"',page.text)
-            self.assertIn('<base href="'+prefix+'/">',page.text)
+            self.assertIn('action="./"',page.text)
+            self.assertNotIn('<base ',page.text)
             response=self.client.post(prefix+'/login/',data={'username':'fixture','password':'fixture'},headers={'Origin':main.ORIGIN})
             self.assertEqual(response.status_code,200)
             self.assertEqual(response.text,'Authenticated SABnzbd fixture')
@@ -70,12 +70,7 @@ class ProxyPathsTest(unittest.TestCase):
             self.client.get(prefix+'/')
             self.assertEqual(len(calls),4)
 
-    def test_form_targets_respect_document_path_and_original_base(self):
+    def test_relative_navigation_and_forms_remain_relative_without_injected_base(self):
         from app.web_proxy import rewrite_markup
-        prefix='/web-proxy/ws/item'
-        markup='<form action="./"><button formaction="../logout/">Logout</button></form>'
-        rewritten=rewrite_markup(markup,'https://example.test',prefix,'https://example.test/sabnzbd/login/')
-        self.assertIn('action="'+prefix+'/sabnzbd/login/"',rewritten)
-        self.assertIn('formaction="'+prefix+'/sabnzbd/logout/"',rewritten)
-        rewritten=rewrite_markup('<base href="/custom/"><form action=./>','https://example.test',prefix,'https://example.test/login/')
-        self.assertIn('action="'+prefix+'/custom/"',rewritten)
+        markup='<form action="./"><button formaction="../logout/">Logout</button></form><script src="./app.js"></script>'
+        self.assertEqual(rewrite_markup(markup,'https://example.test','/web-proxy/ws/item'),markup)

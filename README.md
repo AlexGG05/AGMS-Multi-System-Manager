@@ -173,9 +173,10 @@ path too. Existing AGMS service reachability remains available below Kuma.
 A proxied WebUI can use a start path, for example
 `https://kuma.example.com/dashboard`. Approval still applies only to the HTTPS
 origin (`https://kuma.example.com`); requests for assets and WebSockets remain
-rooted at that origin. AGMS supplies a proxy-aware HTML base for applications
-such as Uptime Kuma whose Vue Router otherwise interprets the AGMS prefix as an
-unknown route. Existing application base tags are preserved and rewritten.
+rooted at that origin. AGMS preserves the application's original HTML base and relative navigation.
+It does not insert a new `<base>` tag: doing so can break relative login forms
+and resources in applications such as SABnzbd. SPAs that require their own
+history-router base may still be incompatible with a path-based proxy.
 The Kuma administration dashboard is separate from public status-page entries:
 those still require a published `/status/<slug>` URL.
 
