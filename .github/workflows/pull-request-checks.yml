@@ -1,0 +1,36 @@
+name: Pull request checks
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: pip install -r requirements.txt
+      - run: python -m unittest discover -s tests -q
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+      - name: Check JavaScript syntax
+        run: |
+          for file in app/static/*.js; do node --check "$file"; done
+      - name: Install browser test runtime
+        run: |
+          npm install --prefix /tmp/agms-playwright --no-save playwright@1.62.1
+          /tmp/agms-playwright/node_modules/.bin/playwright install --with-deps chromium
+      - name: Browser regression checks
+        env:
+          PLAYWRIGHT_MODULE: /tmp/agms-playwright/node_modules/playwright
+        run: |
+          export CHROMIUM_PATH="$(node -e "process.stdout.write(require(process.env.PLAYWRIGHT_MODULE).chromium.executablePath())")"
+          tests/run_browser_checks.sh

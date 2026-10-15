@@ -1,13 +1,13 @@
 const $=id=>document.getElementById(id);
 const csrf=()=>decodeURIComponent((document.cookie.match(/(?:^|; )csrf=([^;]*)/)||[])[1]||'');
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-async function api(path,method='GET',body){const r=await fetch(path,{method,credentials:'same-origin',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf()},body:body===undefined?undefined:JSON.stringify(body)});const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.detail||'HTTP '+r.status);return d}
+async function api(path,method='GET',body){if(method==='PUT'&&workspace&&path==='/api/workspaces/'+workspace.id+'/navigation'&&body&&body.revision===undefined)body={...body,revision:workspace.layout_revision};const r=await fetch(path,{method,credentials:'same-origin',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf()},body:body===undefined?undefined:JSON.stringify(body)});const d=await r.json().catch(()=>({}));if(!r.ok){const error=Error(d.detail||'HTTP '+r.status);error.status=r.status;throw error}if(method==='PUT'&&workspace&&path==='/api/workspaces/'+workspace.id+'/navigation'&&d.revision!==undefined)workspace.layout_revision=d.revision;return d}
 let restoringWebUi=false;
 let workspaces=[],workspace=null,items=[],role='viewer',tier=0,selectedGroup=null,editing=false,workspaceLocked=false;
 const notify=message=>$('notice').textContent=message;
 function panels(id){if(id!=='framePanel'){setFrameExpanded(false);if(!restoringWebUi&&location.pathname.startsWith('/webui/'))history.replaceState(null,'','/');}$('showHome').classList.toggle('active',id==='homePanel');$('showMonitoring').classList.toggle('active',id==='statusPanel');for(const key of ['homePanel','framePanel','editorPanel','teamPanel','statusPanel'])$(key).hidden=key!==id}
 function maxHomes(){return tier===3?10:tier===2?5:tier===1?3:1}
-async function init(){const route=location.pathname.match(/^\/webui\/([^/]+)\/([^/]+)\/$/);restoringWebUi=true;try{const data=await api('/api/workspaces');workspaces=data.workspaces;tier=data.tier;$('tierLabel').textContent=data.account_role==='admin'?'Administrator':tier?'Tier '+tier:'Free · 1 Homepage';$('premiumLink').hidden=data.account_role!=='admin';$('workspaceSelect').replaceChildren(...workspaces.map(w=>{const option=document.createElement('option');option.value=w.id;option.textContent=w.name;return option}));if(!workspaces.length){notify('Erstelle deine erste Homepage.');panels('homePanel');return}const stored=localStorage.getItem('codex-active-homepage');await openWorkspace((route&&workspaces.find(w=>w.id===decodeURIComponent(route[1]))?.id)||workspaces.find(w=>w.id===stored)?.id||workspaces[0].id);restoringWebUi=false;if(route){const item=items.find(n=>n.id===decodeURIComponent(route[2])&&n.url);if(item){selectedGroup=item.parent_id||null;openFrame(item)}else{notify('WebUI not found');history.replaceState(null,'','/')}}await showNotifications();loadProfileBadge()}catch(e){notify(e.message)}finally{restoringWebUi=false;$('showMonitoring').disabled=false;$('notificationBell').disabled=false}}
+async function init(){const route=location.pathname.match(/^\/webui\/([^/]+)\/([^/]+)\/$/);restoringWebUi=true;try{const data=await api('/api/workspaces');workspaces=data.workspaces;tier=data.tier;window.agmsAccountRole=data.account_role;$('tierLabel').textContent=data.account_role==='admin'?'Administrator':tier?'Tier '+tier:'Free · 1 Homepage';$('premiumLink').hidden=data.account_role!=='admin';$('workspaceSelect').replaceChildren(...workspaces.map(w=>{const option=document.createElement('option');option.value=w.id;option.textContent=w.name;return option}));if(!workspaces.length){notify('Erstelle deine erste Homepage.');panels('homePanel');return}const stored=localStorage.getItem('codex-active-homepage');await openWorkspace((route&&workspaces.find(w=>w.id===decodeURIComponent(route[1]))?.id)||workspaces.find(w=>w.id===stored)?.id||workspaces[0].id);restoringWebUi=false;if(route){const item=items.find(n=>n.id===decodeURIComponent(route[2])&&n.url);if(item){selectedGroup=item.parent_id||null;openFrame(item)}else{notify('WebUI not found');history.replaceState(null,'','/')}}await showNotifications();loadProfileBadge()}catch(e){notify(e.message)}finally{restoringWebUi=false;$('showMonitoring').disabled=false;$('notificationBell').disabled=false}}
 async function loadProfileBadge(){try{const p=await api('/api/account/profile');$('profileName').textContent=p.display_name||'Profil';if(p.avatar)$('profileAvatar').src=p.avatar}catch(e){console.warn('Profil konnte nicht geladen werden',e)}}
 async function openWorkspace(id){try{const d=await api('/api/workspaces/'+id);workspace=d.workspace;role=d.role;workspaceLocked=d.editable===false;items=d.navigation;editing=false;selectedGroup=null;localStorage.setItem('codex-active-homepage',id);$('workspaceSelect').value=id;$('pageTitle').textContent=workspace.name;$('deleteWorkspace').disabled=role!=='owner';$('renameWorkspace').disabled=role!=='owner'||workspaceLocked;$('editButton').hidden=role==='viewer'||workspaceLocked;$('addGroup').hidden=role==='viewer'||workspaceLocked;$('addWebui').hidden=role==='viewer'||workspaceLocked;$('invite').hidden=role!=='owner'||workspaceLocked;notify(workspaceLocked?'Nur Lesen: Diese Homepage liegt über dem Limit deines aktuellen Tiers. Die Inhalte bleiben verfügbar.':'');renderNav();showHome()}catch(e){notify(e.message)}}
 let frameOriginalParent=null,frameOriginalNext=null;
@@ -28,11 +28,12 @@ function setFrameExpanded(expanded){if(typeof window.agmsSetFrameMode==='functio
  button.textContent=expanded?'⤢ Verkleinern':'⛶ Vollbild';button.setAttribute('aria-pressed',String(expanded));
 }
 function renderNav(){$('groupNav').replaceChildren();for(const group of items.filter(n=>!n.url)){const b=document.createElement('button');b.className='web-nav';b.textContent='▤  '+group.title;b.onclick=()=>showGroup(group.id);$('groupNav').append(b)}}
-function tile(item){const b=document.createElement('button');b.className='web-tile';const icon=document.createElement('span');icon.className='web-tile-icon';icon.textContent=item.icon||'◈';const name=document.createElement('strong');name.textContent=item.title;const sub=document.createElement('small');sub.textContent=item.url?'Weboberfläche':'Gruppe öffnen';b.append(icon,name,sub);b.onclick=()=>item.url?openFrame(item):showGroup(item.id);return b}
+function tile(item){const b=document.createElement('button');b.className='web-tile';const icon=document.createElement('span');icon.className='web-tile-icon';icon.textContent=item.icon||'◈';const name=document.createElement('strong');name.textContent=item.title;const sub=document.createElement('small');sub.textContent=item.open_mode==='ssh'?'SSH terminal':item.open_mode==='rdp'?'RDP (Guacamole)':item.url?'Weboberfläche':'Gruppe öffnen';b.append(icon,name,sub);b.onclick=()=>item.url?openFrame(item):showGroup(item.id);return b}
 function showHome(){selectedGroup=null;$('breadcrumb').textContent='ÜBERSICHT';$('pageTitle').textContent=workspace?.name||'Meine Homepage';$('tiles').replaceChildren(...items.filter(n=>!n.parent_id).map(tile));if(!$('tiles').children.length){const p=document.createElement('p');p.textContent='Noch keine Weboberflächen. Über „WebUI hinzufügen“ kannst du deinen ersten Dienst anlegen.';$('tiles').append(p)}panels('homePanel')}
 function showGroup(id){selectedGroup=id;const group=items.find(n=>n.id===id&&!n.url);if(!group)return showHome();$('breadcrumb').textContent=workspace.name;$('pageTitle').textContent=group.title;$('tiles').replaceChildren(...items.filter(n=>n.parent_id===id).map(tile));panels('homePanel')}
 function openFrame(item){
  if(!item.url)return;
+ if(['ssh','rdp'].includes(item.open_mode)){const wsid=workspace.id;const launch=()=>window.agmsOpenRemote?.(item,wsid);if(window.agmsOpenRemote)launch();else window.addEventListener('agms-desktop-ready',launch,{once:true});return}
  if(item.open_mode==='external'){window.open(item.url,'_blank','noopener,noreferrer');return}
  try{
   const u=new URL(item.url);
@@ -55,7 +56,7 @@ function drawEditor(){
  function action(label,callback){const b=document.createElement('button');b.type='button';b.className='web-editor-action';b.textContent=label;b.onclick=callback;return b}
  function field(label,value,onchange,type='text'){const wrap=document.createElement('label');wrap.className='web-config-field';const cap=document.createElement('span');cap.textContent=label;const input=document.createElement('input');input.type=type;input.value=value||'';input.oninput=()=>onchange(input.value);wrap.append(cap,input);return wrap}
  function rowFor(item){
-  const card=document.createElement('div');card.className='web-config-card';
+  const card=document.createElement('div');card.className='web-config-card';card.dataset.editorId=item.id;
   const header=document.createElement('strong');header.textContent=item.url?'◈ '+item.title:'▤ '+item.title;card.append(header);
   card.append(field('Name',item.title,v=>item.title=v));
   card.append(field('Icon: Emoji oder HTTPS-Bildadresse',item.icon_url||item.icon||'◈',v=>{const value=v.trim();if(/^https?:\/\//i.test(value)){item.icon_url=value}else{item.icon=value;item.icon_url=''};}));
@@ -63,11 +64,13 @@ function drawEditor(){
   const colorLabel=document.createElement('label');colorLabel.className='web-config-field';colorLabel.textContent='Kachelfarbe';const colorInput=document.createElement('input');colorInput.type='color';colorInput.value=/^#[0-9a-f]{6}$/i.test(item.color||'')?item.color:'#243b5a';colorInput.oninput=()=>item.color=colorInput.value;colorLabel.append(colorInput);card.append(colorLabel);
   const favoriteLabel=document.createElement('label');favoriteLabel.className='web-config-check';const favoriteInput=document.createElement('input');favoriteInput.type='checkbox';favoriteInput.checked=!!item.favorite;favoriteInput.onchange=()=>item.favorite=favoriteInput.checked;favoriteLabel.append(favoriteInput,document.createTextNode(' Als Favorit anzeigen'));card.append(favoriteLabel);
   if(item.url){
-   card.append(field('WebUI-Adresse',item.url,v=>item.url=v,'url'));
+   if(!['ssh','rdp'].includes(item.open_mode))card.append(field('WebUI-Adresse',item.url,v=>item.url=v,'url'));
    const label=document.createElement('label');label.className='web-config-field';const cap=document.createElement('span');cap.textContent='Öffnungsmodus';const select=document.createElement('select');
-   [['embed','Innerhalb von AGMS (iframe)'],['external','Extern in neuem Tab'],['proxy','Über AGMS-Proxy öffnen (Freigabe durch Administrator)']].forEach(([v,t])=>{const o=document.createElement('option');o.value=v;o.textContent=t;select.append(o)});
-   select.value=item.open_mode||'embed';select.onchange=()=>item.open_mode=select.value;label.append(cap,select);card.append(label);
+   [['embed','Innerhalb von AGMS (iframe)'],['external','Extern in neuem Tab'],['proxy','Über AGMS-Proxy öffnen (Freigabe durch Administrator)'],['ssh','SSH terminal'],['rdp','RDP (Guacamole)']].forEach(([v,t])=>{const o=document.createElement('option');o.value=v;o.textContent=t;select.append(o)});
+   select.value=item.open_mode||'embed';select.onchange=()=>{item.open_mode=select.value;if(['ssh','rdp'].includes(select.value))item.url=select.value+'://connection';drawEditor()};label.append(cap,select);card.append(label);
   }
+  if(['ssh','rdp'].includes(item.open_mode))card.append(action('Configure connection',async()=>{try{if(!await save())return;await window.agmsConfigureRemote(workspace.id,item)}catch(e){notify(e.message)}}));
+  if(item.url){const label=document.createElement('label');label.className='web-config-field';label.textContent='Minimum role to open';const select=document.createElement('select');for(const value of (role==='owner'?['viewer','editor','owner']:['viewer','editor'])){const option=document.createElement('option');option.value=value;option.textContent=value;select.append(option)}select.value=item.min_role||'viewer';select.onchange=()=>item.min_role=select.value;label.append(select);card.append(label)}
   const actions=document.createElement('div');actions.className='web-config-actions';
   for(const [direction,label] of [[-1,'↑'],[1,'↓']])actions.append(action(label,()=>{const siblings=items.filter(n=>n.parent_id===item.parent_id);const at=siblings.findIndex(n=>n.id===item.id);const target=siblings[at+direction];if(!target)return;const from=items.indexOf(item),to=items.indexOf(target);[items[from],items[to]]=[items[to],items[from]];drawEditor()}));
   actions.append(action('Löschen',()=>{if(!confirm('„'+item.title+'“ wirklich löschen?'+(!item.url?' Alle WebUIs dieser Gruppe werden ebenfalls entfernt.':'')))return;items=items.filter(n=>n.id!==item.id&&n.parent_id!==item.id);if(selectedGroup===item.id)selectedGroup=null;drawEditor()}));
@@ -102,25 +105,26 @@ function addItem(group){
  if(!name?.trim())return;
  let url=null,open_mode='embed';
  if(!group){
-  url=prompt('WebUI-Adresse (https:// oder http://)');
-  if(!url)return;
-  try{const u=new URL(url);if(!['http:','https:'].includes(u.protocol)||!u.hostname||u.username||u.password)throw Error('URL')}catch{return notify('Bitte eine gültige HTTP(S)-Adresse eingeben')}
-  open_mode=confirm('WebUI extern in einem neuen Tab öffnen?\nOK = Extern öffnen\nAbbrechen = In AGMS einbetten')?'external':'embed';
+  open_mode=prompt(window.agmsTranslate?.('Opening mode: embed, proxy, external, ssh or rdp')||'Opening mode: embed, proxy, external, ssh or rdp','embed');
+  if(!['embed','proxy','external','ssh','rdp'].includes(open_mode))return;
+  if(['ssh','rdp'].includes(open_mode))url=open_mode+'://connection';
+  else{url=prompt('WebUI URL (https:// or http://)');if(!url)return;try{const u=new URL(url);if(!['http:','https:'].includes(u.protocol)||!u.hostname||u.username||u.password)throw Error('URL')}catch{return notify('Invalid WebUI URL')}}
  }
+
  const id=crypto.randomUUID();
  items.push({id,title:name.trim(),url,icon:group?'▤':'◈',parent_id:group?null:selectedGroup,min_role:'viewer',open_mode});
  if(group)selectedGroup=id;
  drawEditor();
 }
 async function save(){
- if(workspaceLocked)return notify('Diese Homepage ist schreibgeschützt.');
+ if(workspaceLocked){notify('Diese Homepage ist schreibgeschützt.');return false;}
  try{
   await api('/api/workspaces/'+workspace.id+'/navigation','PUT',{items});
   const returnGroup=selectedGroup;
   await openWorkspace(workspace.id);
   if(returnGroup&&items.some(n=>n.id===returnGroup&&!n.url))showGroup(returnGroup);
-  notify('Änderungen gespeichert');
- }catch(e){notify('Speichern fehlgeschlagen: '+e.message)}
+  notify('Änderungen gespeichert');return true;
+ }catch(e){notify('Speichern fehlgeschlagen: '+e.message);return false;}
 }
 async function team(){try{const data=await api('/api/workspaces/'+workspace.id+'/members');$('members').replaceChildren();for(const m of data.members){const row=document.createElement('div');row.className='web-member';const text=document.createElement('span');text.textContent=(m.email||m.username)+' · '+m.role;row.append(text);if(role==='owner'&&m.role!=='owner'){const remove=document.createElement('button');remove.textContent='Entfernen';remove.onclick=async()=>{if(!confirm('Teammitglied entfernen?'))return;try{await api('/api/workspaces/'+workspace.id+'/members/'+encodeURIComponent(m.username),'DELETE');await team()}catch(e){notify(e.message)}};row.append(remove)}$('members').append(row)}panels('teamPanel')}catch(e){notify(e.message)}}
 async function showNotifications(){try{const data=await api('/api/notifications');const root=$('notifications');root.replaceChildren();$('notificationCount').textContent=String(data.notifications.length);$('notificationCount').hidden=!data.notifications.length;if(!data.notifications.length){const empty=document.createElement('p');empty.className='web-empty';empty.textContent='Keine neuen Benachrichtigungen';root.append(empty)}for(const n of data.notifications){const box=document.createElement('div');box.className='web-member';const label=document.createElement('span');if(n.ticket_id){const title=document.createElement('strong');title.textContent=n.message;const summary=document.createElement('p');summary.textContent='#'+n.ticket_number+' · '+(n.ticket_subject||'');summary.dataset.agmsI18nIgnore='';label.append(title,summary);if(n.ticket_comment){const comment=document.createElement('p');comment.textContent=n.ticket_comment;comment.dataset.agmsI18nIgnore='';comment.style.cssText='white-space:pre-wrap;overflow-wrap:anywhere';label.append(comment)}}else if(n.message.startsWith('Expiry warning: ')){const title=document.createElement('strong');title.textContent='Expiry warning';const context=document.createElement('p');context.textContent=n.message.slice(16);context.dataset.agmsI18nIgnore='';label.append(title,context)}else{label.textContent='🔔 '+n.message;}const open=document.createElement('button');open.textContent='Öffnen';open.onclick=async()=>{if(n.ticket_id){await api('/api/notifications/'+n.id+'/read','POST');window.location.href='/static/tickets.html?ticket='+encodeURIComponent(n.ticket_id);return}if(n.message.startsWith('Expiry warning: ')){await api('/api/notifications/'+n.id+'/read','POST');$('showMonitoring').click();return}if(n.message.startsWith('Neue Proxy-Freigabe angefragt:')){await api('/api/notifications/'+n.id+'/read','POST');window.location.href='/static/admin-panel.html#proxy-requests';return}await api('/api/notifications/'+n.id+'/read','POST');await init();if(workspaces.some(w=>w.id===n.workspace_id))await openWorkspace(n.workspace_id);await showNotifications()};const dismiss=document.createElement('button');dismiss.textContent='×';dismiss.onclick=async()=>{await api('/api/notifications/'+n.id+'/read','POST');await showNotifications()};box.append(label,open,dismiss);root.append(box)}}catch(e){notify(e.message)}}
@@ -140,7 +144,7 @@ $('addWorkspace').onclick=async()=>{const name=prompt('Name der neuen Homepage')
 $('deleteWorkspace').onclick=async()=>{if(!workspace||role!=='owner')return;if(!confirm('Homepage „'+workspace.name+'“ mit allen Gruppen, Widgets und Teamzuordnungen endgültig löschen?'))return;try{await api('/api/workspaces/'+workspace.id,'DELETE');localStorage.removeItem('codex-active-homepage');workspace=null;await init();notify('Homepage gelöscht')}catch(e){notify(e.message)}};
 $('teamButton').onclick=team;$('closeTeam').onclick=showHome;
 $('invite').onclick=async()=>{const email=prompt('E-Mail-Adresse des Teammitglieds');if(!email)return;const role=prompt('Rolle: viewer oder editor','viewer');try{await api('/api/workspaces/'+workspace.id+'/invitations','POST',{email,role});notify('Benutzer hinzugefügt oder per E-Mail eingeladen')}catch(e){notify(e.message)}};
-$('logout').onclick=async()=>{try{await api('/api/logout','POST');location.href='/'}catch(e){notify(e.message)}};
+$('logout').onclick=async()=>{try{window.agmsCloseWindows?.();await api('/api/logout','POST');location.href='/'}catch(e){notify(e.message)}};
 init();
 
 setInterval(showNotifications,30000);

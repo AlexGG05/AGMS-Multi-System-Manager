@@ -1,0 +1,2 @@
+# Keep vendored upstream sources byte-for-byte, including their whitespace.
+app/static/vendor/** linguist-vendored -whitespace

@@ -4,6 +4,11 @@ from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from app import main
 import uvicorn
+from fastapi.responses import JSONResponse
+@main.app.middleware("http")
+async def fixture_status(request,call_next):
+ if request.url.path.startswith("/api/workspaces/") and "/status/" in request.url.path:return JSONResponse({"status":"online"})
+ return await call_next(request)
 main.DB=tempfile.mktemp(suffix='.sqlite3',prefix='agms-browser-')
 main.init()
 with main.connect() as db:

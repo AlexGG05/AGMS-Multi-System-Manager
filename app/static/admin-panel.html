@@ -17,10 +17,10 @@
 .admin-count{opacity:.8;font-size:.9rem}
 @media(max-width:850px){.admin-grid{grid-template-columns:1fr}.admin-scroll{max-height:460px}}
 </style>
-<link rel="stylesheet" href="/static/ui.css?v=20261015-kuma-history1"><link rel="stylesheet" href="/static/legal.css?v=20261015-legal1"></head>
+<link rel="stylesheet" href="/static/ui.css?v=20261015-kuma-history1"><link rel="stylesheet" href="/static/legal.css?v=20261015-legal1"><link rel="stylesheet" href="/static/remote.css?v=20261015-remote1"></head>
 <body><main class="workspace">
 <div class="top"><h1>Admin Panel</h1><a href="/">Back</a></div>
-<nav class="admin-menu" aria-label="Admin sections" hidden><button type="button" data-section="proxy-requests" aria-pressed="false">Proxy requests</button><button type="button" data-section="accounts-column" aria-pressed="false">Users</button><button type="button" data-section="tickets-column" aria-pressed="false">Tickets</button><button type="button" data-section="audit-column" aria-pressed="false">Change history</button></nav>
+<nav class="admin-menu" aria-label="Admin sections" hidden><button type="button" data-section="proxy-requests" aria-pressed="false">Proxy requests</button><button type="button" data-section="accounts-column" aria-pressed="false">Users</button><button type="button" data-section="tickets-column" aria-pressed="false">Tickets</button><button type="button" data-section="audit-column" aria-pressed="false">Change history</button><button type="button" data-section="remote-targets" aria-pressed="false">Remote destinations</button></nav>
 <div class="admin-grid">
 <section class="admin-column" id="accounts-column" hidden>
 <h2>Users</h2><p>Tier 0: 1 homepage · Tier 1: 3 · Tier 2: 5 · Tier 3: 10</p>
@@ -36,7 +36,7 @@
 <div class="admin-scroll" id="proxyRequests"></div>
 </section>
 </div>
-<section class="admin-column" id="tickets-column" hidden><h2>Tickets</h2><input class="admin-search" id="ticketSearch" type="search" placeholder="Search number, subject, category or requester" aria-label="Search tickets"><div class="admin-scroll" id="tickets"></div></section><section class="admin-column" id="audit-column" hidden></section><p id="status" role="status"></p>
+<section class="admin-column" id="tickets-column" hidden><h2>Tickets</h2><input class="admin-search" id="ticketSearch" type="search" placeholder="Search number, subject, category or requester" aria-label="Search tickets"><div class="admin-scroll" id="tickets"></div></section><section class="admin-column" id="audit-column" hidden></section><section class="admin-column" id="remote-targets" hidden></section><p id="status" role="status"></p>
 </main>
 <script>
 const $=id=>document.getElementById(id);
@@ -144,6 +144,7 @@ document.querySelectorAll('[data-section]').forEach(button=>button.onclick=async
  try{
  if(button.dataset.section==='accounts-column')await loadAccounts();
  else if(button.dataset.section==='proxy-requests')await loadProxyRequests();
+ else if(button.dataset.section==='remote-targets')await window.agmsLoadRemoteTargets?.();
  else if(button.dataset.section==='audit-column')await window.agmsLoadAudit?.();
  else{const res=await fetch('/api/admin/tickets');if(!res.ok)throw Error('Could not load tickets.');state.tickets=(await res.json()).tickets;renderTickets()}
  }catch(e){status(e.message)}
@@ -154,4 +155,4 @@ document.querySelectorAll('[data-section]').forEach(button=>button.onclick=async
  document.querySelector('.admin-menu').hidden=true;status('Administrators only');
  }else{document.querySelector('.admin-menu').hidden=false;const section=location.hash.slice(1);const button=Array.from(document.querySelectorAll('[data-section]')).find(item=>item.dataset.section===section);if(button)button.click()}
 })().catch(()=>status('Administrators only'));
-</script><script src="/static/operations-ui.js?v=20261015-kuma-history1" defer></script><script src="/static/admin-audit.js?v=20261015-kuma-history1" defer></script><script src="/static/tickets.js?v=20261015" defer></script><script src="/static/agms-i18n.js?v=20261015-legal1" defer></script><footer class="agms-footer"><nav aria-label="Legal information"><a href="/imprint">Legal notice</a><span aria-hidden="true">·</span><a href="/privacy">Privacy policy</a></nav><span>AGMS · Multi System Manager</span></footer></body></html>
+</script><script src="/static/operations-ui.js?v=20261015-kuma-history1" defer></script><script src="/static/admin-audit.js?v=20261015-kuma-history1" defer></script><script src="/static/tickets.js?v=20261015" defer></script><script src="/static/admin-remote.js?v=20261015-remote1" defer></script><script src="/static/agms-i18n.js?v=20261015-legal1" defer></script><footer class="agms-footer"><nav aria-label="Legal information"><a href="/imprint">Legal notice</a><span aria-hidden="true">·</span><a href="/privacy">Privacy policy</a></nav><span>AGMS · Multi System Manager</span></footer></body></html>

@@ -5,6 +5,8 @@ Lightweight, self-hosted homelab dashboard. Runs on Raspberry Pi OS 64-bit (ARM6
 ## Implemented
 - Personal and shared homepages, service groups, favorites, tile/list views and navigation import/export
 - Embedded WebUIs, external links and administrator-approved HTTPS proxy origins
+- Browser SSH (password/private key), integrated Guacamole RDP and encrypted per-homepage connections
+- Explicit homepage edit mode, persistent tile sizes/order and an optional multi-window desktop
 - Multi-user accounts, team roles, email verification/recovery and optional TOTP/passkeys
 - Administrator panel, support tickets, comments, screenshots, service context and notifications
 - Global search, configurable homepage widgets and English/German interface
@@ -13,7 +15,7 @@ Lightweight, self-hosted homelab dashboard. Runs on Raspberry Pi OS 64-bit (ARM6
 - Optional API integrations for Proxmox, Arcane and TrueNAS; availability depends on configured endpoints/API compatibility
 - Persistent SQLite storage and ARM64 Docker deployment
 
-Browser SSH/console, Guacamole SSO and FRITZ!Box telemetry are not implemented.
+SSH/RDP setup and security: [Browser remote access](docs/REMOTE-ACCESS.md). Editing, mobile controls and window management: [Workspace desktop](docs/WORKSPACE-DESKTOP.md). FRITZ!Box telemetry and remote-session resume across page/server restart are not implemented.
 
 ## Requirements
 - Raspberry Pi OS 64-bit, Docker Engine and Compose plugin
@@ -320,3 +322,9 @@ The Proxmox homepage widget separates total/running QEMU VMs and LXC containers,
 ### Legal pages
 
 All AGMS pages include a static footer linking to the public `/imprint` and `/privacy` pages (German aliases: `/impressum`, `/datenschutz`). They are accessible without a session, including from registration and sign-in, and use the existing English/German language preference. Footer links and the default English text remain usable without JavaScript. The documents use the operator details and policy supplied in the PDFs, with self-hosting clarified and AGMS account, browser storage, tickets, security, API and optional push processing added. Source attribution is retained. Review the content when infrastructure, external providers or retention practices change. The original PDFs are not published.
+
+### Review and validation for SSH/RDP and issue #8
+
+This work is developed on review branches, not automatically merged/deployed to `main`. See [implementation notes](docs/REMOTE-DESKTOP-IMPLEMENTATION.md) for the issue analysis, migration scope, checks and remaining limitations. Optional RDP is enabled with `compose.remote.yaml`; preserve the existing data volume and `SESSION_SECRET`. The default Docker Compose services, credentials, tiers and homepage limits are retained.
+
+Python regression and live SSH tests run with `python -m unittest discover -s tests -q`. `tests/run_browser_checks.sh` runs the browser regressions and isolated desktop/SSH/Guacamole fixtures (requires Python dependencies, Playwright and Chromium). Normal browser CI uses a simulated guacd; a real guacd/FreeRDP NLA desktop with certificate pinning was also exercised during development.

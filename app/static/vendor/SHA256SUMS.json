@@ -1,0 +1,10 @@
+{
+  "xterm/LICENSE-addon-fit": "e256f01188af527e4d06d21d06fbf785ae9c50d4b328bf03cbe0ba7f0aa4228f",
+  "xterm/LICENSE-xterm": "b569f629d00f2626a8100df2a1798210535621e42164dfd426a6fe5aac7b0ccd",
+  "xterm/xterm.js": "14903579ff54664cd72f8e8699e6961a6272c21863ec1c3b118cdc8af5d4a972",
+  "xterm/addon-fit.js": "ba3ea256ce0620a0992a197d6c9baea64823fc93d8da07a9e366ca9943c18527",
+  "xterm/xterm.css": "854a7c0fb70e8b1a083c16797ab827299fb18744f5ad34f227b48337e33293c6",
+  "guacamole/NOTICE": "9f1ec0252c59b209f5470b739039fcb5d29f51d832cef643000bf5e1d3dd29ff",
+  "guacamole/LICENSE": "3c7f148c26065e0a581b5dda114e68e16243bf5ae0b4f6209749a0e3373201d5",
+  "guacamole/guacamole.js": "3c063e62ecd5a70edeb042aae4323d0cd7c7f768b99528e7ff794767336b6179"
+}
