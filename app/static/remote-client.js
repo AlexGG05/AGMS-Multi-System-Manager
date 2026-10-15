@@ -29,37 +29,38 @@ window.agmsRemoteClient=async(host,wsid,item)=>{
  try{
   const data=await api(endpoint,'POST');if(controller.closed)return controller;
   const url=new URL('/api/remote/tunnel',location.href);url.protocol=location.protocol==='https:'?'wss:':'ws:';url.searchParams.set('ticket',data.ticket);url.searchParams.set('width',String(Math.max(320,host.clientWidth)));url.searchParams.set('height',String(Math.max(240,host.clientHeight-60)));
-  const tools=make('div');tools.className='remote-tools';host.append(tools);
   if(data.kind==='ssh'){
    const area=make('div');area.className='ssh-terminal';area.dataset.agmsI18nIgnore='';host.append(area);
    const terminal=new Terminal({cursorBlink:true,scrollback:3000,fontSize:14,theme:{background:'#0b1220'},allowProposedApi:false});
    const fit=new FitAddon.FitAddon();terminal.loadAddon(fit);terminal.open(area);
    const socket=new WebSocket(url);socket.binaryType='arraybuffer';
    const send=message=>{if(socket.readyState===WebSocket.OPEN)socket.send(JSON.stringify(message))};
-   terminal.onData(data=>send({type:'input',data}));
+   const controls=AGMSRemoteKeys.create({host,kind:'ssh',sendSSH:data=>send({type:'input',data}),focus:()=>terminal.focus(),applicationCursor:()=>terminal.modes.applicationCursorKeysMode});
+   terminal.onData(data=>controls.inputSSH(data));
+   terminal.textarea?.addEventListener('blur',()=>controls.reset());
    function resize(){if(!host.isConnected)return;try{fit.fit();send({type:'resize',cols:terminal.cols,rows:terminal.rows})}catch{}}
    const observer=new ResizeObserver(resize);observer.observe(area);
-   socket.onopen=()=>{note.textContent='Connected';resize();terminal.focus()};
+   socket.onopen=()=>{controls.setEnabled(true);note.textContent='Connected';resize();terminal.focus()};
    socket.onmessage=event=>{if(typeof event.data==='string'){try{note.textContent=JSON.parse(event.data).error||''}catch{}}else terminal.write(new Uint8Array(event.data))};
-   socket.onclose=()=>note.textContent='Session ended. Close this window and reopen the tile to reconnect.';
-   socket.onerror=()=>note.textContent='Remote connection failed.';
-   for(const [label,value] of [['Esc','\x1b'],['Tab','\t'],['Ctrl+C','\x03'],['↑','\x1b[A'],['↓','\x1b[B'],['←','\x1b[D'],['→','\x1b[C']])tools.append(button(label,()=>{send({type:'input',data:value});terminal.focus()}));
-   tools.append(button('Keyboard',()=>terminal.focus()));
-   controller.close=()=>{observer.disconnect();socket.close();terminal.dispose()};
+   socket.onclose=()=>{controls.setEnabled(false);note.textContent='Session ended. Close this window and reopen the tile to reconnect.'};
+   socket.onerror=()=>{controls.setEnabled(false);note.textContent='Remote connection failed.'};
+   controller.close=()=>{controls.dispose();observer.disconnect();socket.close();terminal.dispose()};
   }else{
    const display=make('div');display.className='rdp-display';display.dataset.agmsI18nIgnore='';display.tabIndex=0;host.append(display);
    let ready=false,failed=false;
    const tunnel=new Guacamole.WebSocketTunnel(url.origin+url.pathname);const client=new Guacamole.Client(tunnel);display.append(client.getDisplay().getElement());
-   const keyboard=new Guacamole.Keyboard(display);keyboard.onkeydown=keysym=>{client.sendKeyEvent(1,keysym);return false};keyboard.onkeyup=keysym=>client.sendKeyEvent(0,keysym);
+   let sink;const controls=AGMSRemoteKeys.create({host,kind:'rdp',sendRDP:(state,code)=>client.sendKeyEvent(state,code),focus:()=>sink.getElement().focus({preventScroll:true})});
+   const keyboard=new Guacamole.Keyboard(display);keyboard.onkeydown=code=>controls.keydown(code);keyboard.onkeyup=code=>controls.keyup(code);
+   display.addEventListener('focusout',event=>{if(!display.contains(event.relatedTarget)){keyboard.reset();controls.reset()}});
    const mouse=new Guacamole.Mouse(display);mouse.onmousedown=mouse.onmouseup=mouse.onmousemove=state=>{display.focus();client.sendMouseState(state,true)};
    const touch=new Guacamole.Mouse.Touchpad(display);touch.onmousedown=touch.onmouseup=touch.onmousemove=state=>client.sendMouseState(state,true);
-   const sink=new Guacamole.InputSink();display.append(sink.getElement());const mobileKeys=new Guacamole.Keyboard(sink.getElement());mobileKeys.onkeydown=keyboard.onkeydown;mobileKeys.onkeyup=keyboard.onkeyup;
-   tools.append(button('Keyboard',()=>sink.focus()));tools.append(button('Ctrl+Alt+Del',()=>{for(const k of [0xffe3,0xffe9,0xffff])client.sendKeyEvent(1,k);for(const k of [0xffff,0xffe9,0xffe3])client.sendKeyEvent(0,k)}));
+   sink=new Guacamole.InputSink();const input=sink.getElement();input.setAttribute('aria-label','Remote keyboard input');input.autocomplete='off';input.setAttribute('autocapitalize','off');input.setAttribute('autocorrect','off');input.spellcheck=false;Object.assign(input.style,{width:'1px',height:'1px',opacity:'0',pointerEvents:'none'});display.append(input);
+   // One keyboard listens to the display and its input sink, avoiding duplicate key events.
    function resize(){const d=client.getDisplay();if(d.getWidth()){d.scale(Math.min(1,display.clientWidth/d.getWidth(),display.clientHeight/d.getHeight()));if(ready)note.textContent='Connected'}client.sendSize(Math.max(320,display.clientWidth),Math.max(240,display.clientHeight))}
    const observer=new ResizeObserver(resize);observer.observe(display);client.getDisplay().onresize=resize;
-   client.onerror=()=>{failed=true;ready=false;note.textContent='Remote connection failed. Check NLA, certificate trust and credentials.'};
-   client.onstatechange=state=>{if(state===3){ready=true;resize();display.focus()}else if(state===5){ready=false;if(!failed)note.textContent='Session ended. Close this window and reopen the tile to reconnect.'}};
-   client.connect(url.searchParams.toString());controller.close=()=>{observer.disconnect();keyboard.reset();mobileKeys.reset();client.disconnect()};
+   client.onerror=()=>{failed=true;ready=false;keyboard.reset();controls.setEnabled(false);note.textContent='Remote connection failed. Check NLA, certificate trust and credentials.'};
+   client.onstatechange=state=>{if(state===3){ready=true;controls.setEnabled(true);resize();display.focus()}else if(state===5){ready=false;keyboard.reset();controls.setEnabled(false);if(!failed)note.textContent='Session ended. Close this window and reopen the tile to reconnect.'}};
+   client.connect(url.searchParams.toString());controller.close=()=>{controls.dispose();observer.disconnect();keyboard.reset();client.disconnect()};
   }
  }catch(e){note.textContent=e.message}
  return controller;
