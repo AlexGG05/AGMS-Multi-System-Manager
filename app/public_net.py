@@ -11,7 +11,7 @@ def endpoint(value):
     if not isinstance(value, str) or len(value)>2000 or any(c.isspace() for c in value):
         raise ValueError('Invalid HTTPS address')
     url=urlsplit(value)
-    if url.scheme!='https' or not url.hostname or url.username or url.password or url.fragment or url.port not in (None,443,8443):
+    if url.scheme!='https' or not url.hostname or url.username or url.password or url.fragment or url.port not in (None,443,8443,8006):
         raise ValueError('Use a public HTTPS address without credentials')
     return url
 

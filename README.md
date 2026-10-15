@@ -8,7 +8,7 @@ Lightweight, self-hosted homelab dashboard. Runs on Raspberry Pi OS 64-bit (ARM6
 - Multi-user accounts, team roles, email verification/recovery and optional TOTP/passkeys
 - Administrator panel, support tickets, comments, screenshots, service context and notifications
 - Global search, configurable homepage widgets and English/German interface
-- Service reachability, dependencies, public certificate/domain expiry watches and Uptime Kuma pages with native heartbeat strips
+- Service reachability, public certificate/domain expiry watches and Uptime Kuma pages with native heartbeat strips
 - Homepage audit history and opt-in ntfy, Gotify, Telegram and Discord notifications
 - Optional API integrations for Proxmox, Arcane and TrueNAS; availability depends on configured endpoints/API compatibility
 - Persistent SQLite storage and ARM64 Docker deployment
@@ -142,7 +142,7 @@ The ARM64 workflow publishes `ghcr.io/alexgg05/agms-multi-system-manager:latest`
 - Attach up to three PNG, JPEG or WebP screenshots per submission (2 MB each, at most ten per ticket). Screenshots are stored in SQLite and are only accessible to the creator and administrators. They can also accompany a feedback reply. A reverse proxy must allow the application's maximum 9 MB ticket request size; for Nginx, configure an appropriate `client_max_body_size`, such as `10m`.
 - **Search everything** (or Ctrl/Cmd+K on the dashboard) searches permitted services, groups and ticket subjects/numbers across homepages. Normal users see their own tickets; administrators can search all tickets.
 - **Notification settings** are available in the sidebar and the bell menu. Bell categories can be switched independently. Ticket emails default to off and require configured SMTP and a verified email address. Email language can be English or German. Failed delivery is queued for up to five attempts, with a five-minute retry delay; ticket actions and bell notifications remain available. SMTP delivery was verified with mocked success/failure, not a live mail server.
-- **Monitoring** is the single sidebar tab for Uptime Kuma cards, followed by certificate/domain watches and service dependencies. The duplicate service-reachability list has been removed from this view; reachability remains on individual homepage tiles. Public checks retain TLS verification and private-address restrictions.
+- **Monitoring** is the single sidebar tab for Uptime Kuma cards, followed by certificate/domain watches. The duplicate service-reachability list has been removed from this view; reachability remains on individual homepage tiles. Public checks retain TLS verification and private-address restrictions.
 
 Existing users, ticket numbers, descriptions and comments are preserved by additive SQLite migrations. No additional Compose volume or dependency is required.
 
@@ -163,7 +163,7 @@ reach the page using a public IP and valid TLS certificate. Private/loopback
 addresses, redirects, embedded credentials and unsupported ports are rejected.
 Ports 80, 443, 8080 and 8443 are supported. Reverse-proxy subpaths are supported
 when the URL ends in `/status/<slug>`; custom-domain root URLs need that explicit
-path too. Certificate and domain watches are displayed directly below Kuma, followed by service dependencies.
+path too. Certificate and domain watches are displayed directly below Kuma.
 
 ### Proxy start paths and Uptime Kuma administration
 
@@ -211,11 +211,11 @@ single column.
 ### Monitoring and automatic refresh
 
 The **Monitoring** sidebar tab combines Kuma status-page cards with certificate/domain
-expiry watches directly below them, followed by service dependencies. The profile controls automatic refresh: disabled, 30 seconds,
+expiry watches directly below them. The profile controls automatic refresh: disabled, 30 seconds,
 1, 2 or 5 minutes; the default is 1 minute. Checks run while the dashboard/status
 or monitoring page is visible. Editing a monitoring form pauses its automatic
 refresh. Status requests use the existing public-address restrictions and TLS
-verification. The latest service check is retained for dependency indicators and
+verification. The latest service check is retained for tile indicators and
 summary widgets; the separate AGMS history screen/API has been removed.
 
 Kuma cards instead show the latest **up to 100 actual heartbeats** returned by
@@ -244,10 +244,12 @@ run on due watches every six hours, and the bell/opt-in push channels warn withi
 
 **Dashboard preferences** selects homepage widgets: own ticket counts, service
 status, expiry warnings, Proxmox summary, Arcane container counts and SABnzbd
-queue summary. Widgets default to off. Proxmox/Arcane use the administrator's
-configured API integrations and are restricted to administrators. The personal
-SABnzbd widget connection takes a public HTTPS base URL and API key in the profile;
-its API key is encrypted. No service-control actions are exposed by these widgets.
+queue summary. Widgets default to off. Each API widget has a personal connection
+in the profile: public HTTPS base URL and encrypted API credentials. Proxmox uses
+a read-only `user@realm!token-id=token-secret` token; Arcane uses an API key with
+read access to environments and containers. The central server configuration is
+an administrator-only fallback for Proxmox/Arcane. No service-control actions are
+exposed by these widgets. Existing SABnzbd connections are preserved.
 
 **Push notifications** supports any combination of ntfy (full topic URL and
 optional bearer token), Gotify (server base URL and application token), Telegram
@@ -281,7 +283,7 @@ virtual WebAuthn authenticator, not a user's physical device or cloud account.
 **Admin Panel → Change history** displays homepage/status-page tiles with the
 last editing account and timestamp. Opening one shows a paginated event list:
 homepage creation/rename/deletion, added/removed/changed/reordered navigation
-entries, team membership/invitations, dependencies and personal Kuma status-page
+entries, team membership/invitations and personal Kuma status-page
 configuration. Deleted homepages retain their recorded events. Logs are written
 with the successful database mutation; rejected changes do not produce events.
 This records activity from installation of this feature onward and does not
@@ -310,3 +312,5 @@ PLAYWRIGHT_MODULE=/path/to/node_modules/playwright CHROMIUM_PATH=/usr/bin/chromi
 The fixture uses localhost:8082, a temporary database and test-only credentials;
 it disables real push delivery and external expiry checks. Use a separate test
 process, never import the fixture into a production application process.
+
+Personal homepage API widgets for SABnzbd, Proxmox and Arcane can be configured in Profile → Dashboard preferences. Each connection is private to its account; API credentials are encrypted and never returned to the browser. Use a public HTTPS endpoint with trusted TLS. Proxmox expects a read-only `user@realm!token-id=token-secret` token; Arcane uses an API key with environment/container read access. Blank credentials preserve an existing connection only when the URL is unchanged. The central Proxmox/Arcane server configuration remains an administrator-only fallback. Service dependencies have been removed from Monitoring.

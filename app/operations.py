@@ -1,4 +1,4 @@
-"""Monitoring settings, service dependencies, history, expiry watches and audit log."""
+"""Monitoring settings, API widgets, expiry watches and audit log."""
 import asyncio,json,math,re,secrets,time,ssl
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime,timezone
@@ -10,8 +10,30 @@ DEFAULT={'refresh_seconds':60,'widgets':[]}
 DE_EXPIRY_NOTE='Public expiry dates are not published for .de domains. Enter the renewal date from your registrar.'
 
 
+def personal_widget(kind,connection):
+    from .integrations import cipher
+    token=cipher().decrypt(connection['token']).decode()
+    base=connection['url']
+    if kind=='proxmox':
+        headers={'Authorization':'PVEAPIToken='+token}
+        nodes=public_net.request(base+'/api2/json/cluster/resources?type=node',headers=headers)['data']
+        guests=public_net.request(base+'/api2/json/cluster/resources?type=vm',headers=headers)['data']
+        return {'configured':True,'nodes':len(nodes),'running_guests':sum(g.get('status')=='running' for g in guests),'cpu_percent':round(sum(n.get('cpu',0) for n in nodes)/max(1,len(nodes))*100,1)}
+    from .arcane import _items
+    headers={'X-Api-Key':token}
+    environments=_items(public_net.request(base+'/api/environments',headers=headers))
+    if len(environments)>50:raise ValueError('Too many environments')
+    containers=[]
+    for env in environments:
+        ident=str(env.get('id',''))
+        if not re.fullmatch(r'[A-Za-z0-9_-]{1,128}',ident):raise ValueError('Invalid environment')
+        containers.extend(_items(public_net.request(base+'/api/environments/'+ident+'/containers',headers=headers)))
+    return {'configured':True,'containers':len(containers),'running':sum(c.get('state')=='running' for c in containers)}
+
+
 def install(db):
     db.executescript('''
+    CREATE TABLE IF NOT EXISTS personal_widget_connections(username TEXT NOT NULL,kind TEXT NOT NULL,url TEXT NOT NULL,token BLOB NOT NULL,PRIMARY KEY(username,kind));
     CREATE TABLE IF NOT EXISTS widget_connections(username TEXT PRIMARY KEY,url TEXT NOT NULL,token BLOB NOT NULL);
     CREATE TABLE IF NOT EXISTS user_preferences(username TEXT PRIMARY KEY,settings TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS service_history(workspace_id TEXT NOT NULL,service_id TEXT NOT NULL,checked_at INTEGER NOT NULL,status TEXT NOT NULL,http_status INTEGER,PRIMARY KEY(workspace_id,service_id,checked_at));
@@ -24,6 +46,7 @@ def install(db):
     ''')
     if 'manual_expires_at' not in {r[1] for r in db.execute('PRAGMA table_info(expiry_watches)')}:db.execute('ALTER TABLE expiry_watches ADD COLUMN manual_expires_at INTEGER')
     db.execute("UPDATE expiry_watches SET error=?,expires_at=NULL WHERE kind='domain' AND manual_expires_at IS NULL AND lower(value) LIKE '%.de'",(DE_EXPIRY_NOTE,))
+    db.execute("INSERT OR IGNORE INTO personal_widget_connections SELECT username,'sabnzbd',url,token FROM widget_connections")
     security_keys.install(db)
 
 
@@ -100,8 +123,7 @@ def router(connect,identity,csrf,require_admin,workspace_editable=None):
     def overview(request:Request):
         username=identity(request)
         with connect() as db:
-            services=[dict(s) for s in visible_services(db,username) if s['url']];ids={(s['workspace_id'],s['id']) for s in services}
-            dependencies=[dict(r) for r in db.execute('SELECT * FROM service_dependencies') if (r['workspace_id'],r['service_id']) in ids and (r['workspace_id'],r['depends_on']) in ids]
+            services=[dict(s) for s in visible_services(db,username) if s['url']]
             for s in services:
                 row=db.execute('SELECT status,checked_at,http_status FROM service_history WHERE workspace_id=? AND service_id=? ORDER BY checked_at DESC LIMIT 1',(s['workspace_id'],s['id'])).fetchone()
                 s['latest']=dict(row) if row else None
@@ -109,32 +131,7 @@ def router(connect,identity,csrf,require_admin,workspace_editable=None):
                 s['can_edit']=member['role'] in ('owner','editor') and (workspace_editable(db,s['workspace_id']) if workspace_editable else True)
             watches=[dict(r) for r in db.execute('SELECT * FROM expiry_watches WHERE username=? ORDER BY label',(username,))]
             settings=preferences(db,username)
-        return {'services':services,'dependencies':dependencies,'watches':watches,'preferences':settings,'now':int(time.time())}
-
-    @api.put('/api/monitoring/dependencies')
-    async def dependencies(request:Request):
-        username=identity(request);csrf(request);body=await json_body(request);workspace=body.get('workspace_id');service=body.get('service_id');parents=body.get('depends_on')
-        if not isinstance(parents,list) or len(parents)>30 or any(not isinstance(p,str) for p in parents) or service in parents:raise HTTPException(400,'Invalid dependencies')
-        with connect() as db:
-            member=db.execute('SELECT role FROM workspace_members WHERE workspace_id=? AND username=?',(workspace,username)).fetchone()
-            if not member or member['role'] not in ('owner','editor'):raise HTTPException(403,'Editing permission required')
-            if workspace_editable and not workspace_editable(db,workspace):raise HTTPException(403,'This homepage is read-only for its current tier')
-            allowed={s['id'] for s in visible_services(db,username) if s['workspace_id']==workspace and s['url']}
-            if service not in allowed or any(p not in allowed for p in parents):raise HTTPException(404,'Service not found')
-            edges={}
-            for r in db.execute('SELECT service_id,depends_on FROM service_dependencies WHERE workspace_id=?',(workspace,)):edges.setdefault(r['service_id'],[]).append(r['depends_on'])
-            changed=set(edges.get(service,[]))!=set(parents)
-            edges[service]=parents
-            def cycle(node,stack,seen):
-                if node in stack:return True
-                if node in seen:return False
-                seen.add(node)
-                return any(cycle(p,stack|{node},seen) for p in edges.get(node,[]))
-            if cycle(service,set(),set()):raise HTTPException(400,'Dependencies cannot contain a cycle')
-            db.execute('DELETE FROM service_dependencies WHERE workspace_id=? AND service_id=?',(workspace,service))
-            db.executemany('INSERT INTO service_dependencies VALUES(?,?,?)',[(workspace,service,p) for p in set(parents)])
-            if changed:audit(db,workspace,username,'dependencies.updated',{'service':service,'service_title':db.execute('SELECT title FROM workspace_navigation WHERE workspace_id=? AND id=?',(workspace,service)).fetchone()['title'],'depends_on':parents})
-        return {'ok':True}
+        return {'services':services,'watches':watches,'preferences':settings,'now':int(time.time())}
 
     @api.post('/api/monitoring/watches')
     async def add_watch(request:Request):
@@ -198,17 +195,40 @@ def router(connect,identity,csrf,require_admin,workspace_editable=None):
         for row in rows:row['details']=json.loads(row['details'])
         return {'events':rows,'next_before':rows[-1]['id'] if len(rows)==50 else None}
 
+    @api.get('/api/account/widget-connections')
+    def widget_connections(request:Request):
+        username=identity(request)
+        with connect() as db:
+            return {'connections':{r['kind']:{'url':r['url'],'configured':True} for r in db.execute('SELECT kind,url FROM personal_widget_connections WHERE username=?',(username,))}}
+
     @api.put('/api/account/widget-connection')
     async def widget_connection(request:Request):
         from .integrations import cipher
         username=identity(request);csrf(request);body=await json_body(request)
+        kind=body.get('kind','sabnzbd')
+        if kind not in ('sabnzbd','proxmox','arcane'):raise HTTPException(400,'Invalid widget connection')
         try:
             parsed=public_net.endpoint(body.get('url'))
             if parsed.query:raise ValueError()
-        except (ValueError,TypeError):raise HTTPException(400,'Enter a public HTTPS SABnzbd base URL')
-        token=body.get('token')
-        if not isinstance(token,str) or not 1<=len(token)<=2000:raise HTTPException(400,'Enter the SABnzbd API key')
-        with connect() as db:db.execute('INSERT INTO widget_connections VALUES(?,?,?) ON CONFLICT(username) DO UPDATE SET url=excluded.url,token=excluded.token',(username,body['url'].rstrip('/'),cipher().encrypt(token.encode())))
+        except (ValueError,TypeError):raise HTTPException(400,'Use a public HTTPS address without credentials')
+        token=body.get('token','')
+        if not isinstance(token,str) or len(token)>2000 or any(c in token for c in ('\r','\n')):raise HTTPException(400,'Invalid API credential')
+        with connect() as db:
+            existing=db.execute('SELECT * FROM personal_widget_connections WHERE username=? AND kind=?',(username,kind)).fetchone()
+            url=body['url'].rstrip('/')
+            if not token and (not existing or existing['url']!=url):raise HTTPException(400,'Enter the API credential for this endpoint')
+            if kind=='proxmox' and token and not re.fullmatch(r'[^\s=]+@[^\s=]+![^\s=]+=[^\s=]+',token):raise HTTPException(400,'Use user@realm!token-id=token-secret')
+            encrypted=cipher().encrypt(token.encode()) if token else existing['token']
+            db.execute('INSERT INTO personal_widget_connections VALUES(?,?,?,?) ON CONFLICT(username,kind) DO UPDATE SET url=excluded.url,token=excluded.token',(username,kind,url,encrypted))
+        return {'ok':True}
+
+    @api.delete('/api/account/widget-connection/{kind}')
+    def delete_widget_connection(kind:str,request:Request):
+        username=identity(request);csrf(request)
+        if kind not in ('sabnzbd','proxmox','arcane'):raise HTTPException(400,'Invalid widget connection')
+        with connect() as db:
+            db.execute('DELETE FROM personal_widget_connections WHERE username=? AND kind=?',(username,kind))
+            if kind=='sabnzbd':db.execute('DELETE FROM widget_connections WHERE username=?',(username,))
         return {'ok':True}
 
     @api.get('/api/widgets')
@@ -225,7 +245,8 @@ def router(connect,identity,csrf,require_admin,workspace_editable=None):
                     counts[last['status'] if last and time.time()-last['checked_at']<300 else 'unknown']+=1
                 data['status']=counts
             if 'expiry' in config['widgets']:data['expiry']={'due':db.execute('SELECT count(*) FROM expiry_watches WHERE username=? AND expires_at<unixepoch()+2592000',(username,)).fetchone()[0]}
-            connection=db.execute('SELECT * FROM widget_connections WHERE username=?',(username,)).fetchone()
+            connections={r['kind']:dict(r) for r in db.execute('SELECT * FROM personal_widget_connections WHERE username=?',(username,))}
+            connection=connections.get('sabnzbd')
             admin=db.execute("SELECT 1 FROM account_profiles WHERE username=? AND role='admin'",(username,)).fetchone()
         if 'sabnzbd' in config['widgets']:
             if not connection:data['sabnzbd']={'error':'Configure the SABnzbd widget connection in your profile.'}
@@ -238,7 +259,12 @@ def router(connect,identity,csrf,require_admin,workspace_editable=None):
                 except Exception:data['sabnzbd']={'error':'SABnzbd is unavailable or the API key is invalid.'}
         for kind in ('proxmox','arcane'):
             if kind not in config['widgets']:continue
-            if not admin:data[kind]={'error':'This integration widget requires administrator access.'};continue
+            if kind in connections:
+                try:
+                    data[kind]=await asyncio.to_thread(personal_widget,kind,connections[kind])
+                except Exception:data[kind]={'error':'Integration unavailable. Check the configured API connection.'}
+                continue
+            if not admin:data[kind]={'error':'Configure the widget connection in your profile.'};continue
             try:
                 if kind=='proxmox':
                     from .main import proxmox

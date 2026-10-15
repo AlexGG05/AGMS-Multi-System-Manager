@@ -38,18 +38,57 @@ class OperationsTest(unittest.TestCase):
         self.assertEqual(self.client.get('/api/monitoring/history/shared/public').status_code,404)
         self.login('premium@example.test');self.assertEqual(self.client.get('/api/monitoring').json()['services'],[])
 
-    def test_dependency_acl_cycles_and_audit(self):
-        self.seed_services()
+    def test_dependencies_removed(self):
+        self.login(main.ADMIN)
+        self.assertEqual(self.client.put('/api/monitoring/dependencies',json={},headers=self.headers()).status_code,404)
+        self.assertNotIn('dependencies',self.client.get('/api/monitoring').json())
+
+    def test_personal_api_connections_encrypted_private_and_read_only(self):
+        self.login('user@example.test')
+        for kind,token in [('proxmox','reader@pve!dashboard=secret-value'),('arcane','arcane-secret-value')]:
+            body={'kind':kind,'url':'https://api.example:8006','token':token}
+            self.assertEqual(self.client.put('/api/account/widget-connection',json=body).status_code,403)
+            self.assertEqual(self.client.put('/api/account/widget-connection',json=body,headers=self.headers()).status_code,200)
+            response=self.client.get('/api/account/widget-connections')
+            self.assertNotIn(token,response.text)
+            self.assertEqual(response.json()['connections'][kind]['url'],body['url'])
+            self.assertEqual(self.client.put('/api/account/widget-connection',json={**body,'token':''},headers=self.headers()).status_code,200)
+            self.assertEqual(self.client.put('/api/account/widget-connection',json={**body,'url':'https://other.example','token':''},headers=self.headers()).status_code,400)
         with main.connect() as db:
-            db.execute("INSERT INTO workspace_navigation(id,workspace_id,title,icon,url,min_role) VALUES ('host','shared','Host','globe','https://host.example','viewer')")
-        payload={'workspace_id':'shared','service_id':'public','depends_on':['host']}
-        self.login('user@example.test');self.assertEqual(self.client.put('/api/monitoring/dependencies',json=payload,headers=self.headers()).status_code,403)
-        self.login(main.ADMIN);self.assertEqual(self.client.put('/api/monitoring/dependencies',json=payload,headers=self.headers()).status_code,200)
-        self.assertEqual(self.client.put('/api/monitoring/dependencies',json={**payload,'service_id':'host','depends_on':['public']},headers=self.headers()).status_code,400)
-        self.assertEqual(self.client.put('/api/monitoring/dependencies',json={**payload,'depends_on':['nonexistent']},headers=self.headers()).status_code,404)
-        self.assertEqual(self.client.get('/api/admin/audit/shared').json()['events'][0]['actor'],main.ADMIN)
-        self.login('user@example.test');self.assertEqual(len(self.client.get('/api/monitoring').json()['dependencies']),1)
-        self.assertEqual(self.client.get('/api/admin/audit').status_code,403)
+            self.assertNotIn(b'secret-value',db.execute('SELECT token FROM personal_widget_connections LIMIT 1').fetchone()[0])
+        self.client.put('/api/account/preferences',json={'refresh_seconds':60,'widgets':['proxmox','arcane']},headers=self.headers())
+        def api(url,**kwargs):
+            if 'type=node' in url:
+                self.assertEqual(kwargs['headers']['Authorization'],'PVEAPIToken=reader@pve!dashboard=secret-value')
+                return {'data':[{'cpu':0.25}]}
+            if 'type=vm' in url:return {'data':[{'status':'running'},{'status':'stopped'}]}
+            self.assertEqual(kwargs['headers']['X-Api-Key'],'arcane-secret-value')
+            if url.endswith('/containers'):return {'data':[{'state':'running'},{'state':'exited'}]}
+            return {'data':[{'id':'env-1'}]}
+        with patch('app.operations.public_net.request',side_effect=api):
+            widgets=self.client.get('/api/widgets').json()['data']
+        self.assertEqual(widgets['proxmox'],{'configured':True,'nodes':1,'running_guests':1,'cpu_percent':25.0})
+        self.assertEqual(widgets['arcane'],{'configured':True,'containers':2,'running':1})
+        self.login('premium@example.test')
+        self.assertEqual(self.client.get('/api/account/widget-connections').json()['connections'],{})
+        self.client.delete('/api/account/widget-connection/proxmox',headers=self.headers())
+        self.login('user@example.test')
+        self.assertIn('proxmox',self.client.get('/api/account/widget-connections').json()['connections'])
+        self.client.delete('/api/account/widget-connection/proxmox',headers=self.headers())
+        self.assertNotIn('proxmox',self.client.get('/api/account/widget-connections').json()['connections'])
+        for kind,token in [('bad','token'),('arcane','bad\nheader'),('proxmox','invalid')]:
+            self.assertEqual(self.client.put('/api/account/widget-connection',json={'kind':kind,'url':'https://api.example','token':token},headers=self.headers()).status_code,400)
+
+    def test_existing_sabnzbd_connection_migrates_without_losing_credentials(self):
+        from app.integrations import cipher
+        self.login('user@example.test')
+        with main.connect() as db:
+            db.execute('INSERT INTO widget_connections VALUES(?,?,?)',('user@example.test','https://sab.example',cipher().encrypt(b'original-key')))
+        main.init();main.init()
+        self.assertTrue(self.client.get('/api/account/widget-connections').json()['connections']['sabnzbd']['configured'])
+        self.client.delete('/api/account/widget-connection/sabnzbd',headers=self.headers())
+        main.init()
+        self.assertEqual(self.client.get('/api/account/widget-connections').json()['connections'],{})
 
     def test_audit_navigation_diff_actor_and_noop(self):
         self.seed_services();self.login(main.ADMIN)
