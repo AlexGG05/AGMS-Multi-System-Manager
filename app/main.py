@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 from .inventory import GROUPS
 from .arcane import get_arcane, manage_container
-from . import integrations, workspaces, web_proxy, features, operations, security_keys, push_channels
+from . import integrations, workspaces, web_proxy, features, operations, security_keys, push_channels, remote_sessions
 
 DB = "/data/homelab.sqlite3"
 SECRET = os.environ.get("SESSION_SECRET", "")
@@ -92,7 +92,7 @@ def csrf(request):
 @app.middleware("http")
 async def bookstack_proxy_identity(request: Request, call_next):
     response=await call_next(request)
-    if request.url.path.startswith(('/api/account/','/api/auth/','/api/monitoring','/api/admin/audit')):response.headers['Cache-Control']='no-store'
+    if request.url.path.startswith(('/api/account/','/api/auth/','/api/monitoring','/api/admin/audit','/api/remote')) or '/remote/' in request.url.path:response.headers['Cache-Control']='no-store'
     return response
 
 app.include_router(web_proxy.setup(connect, require))
@@ -175,6 +175,7 @@ def session_response(username):
 @app.post("/api/logout")
 def logout(request:Request):
     require(request);csrf(request)
+    remote_sessions.revoke_cookie(connect,request)
     r=JSONResponse({"ok":True})
     r.delete_cookie("session",path="/");r.delete_cookie("csrf",path="/")
     return r

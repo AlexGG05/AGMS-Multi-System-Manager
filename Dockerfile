@@ -3,9 +3,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /srv
 RUN useradd -u 10001 -m appuser
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Optional build-only CA bundle for managed development/CI proxies; never copied into the image.
+RUN --mount=type=secret,id=build_ca \
+    if [ -f /run/secrets/build_ca ]; then \
+      PIP_CERT=/run/secrets/build_ca pip install --no-cache-dir -r requirements.txt; \
+    else pip install --no-cache-dir -r requirements.txt; fi
 COPY app ./app
-RUN python -m compileall -q /srv/app
+RUN python -m compileall -q /srv/app && chmod -R a+rX /srv/app
 RUN mkdir -p /data && chown appuser:appuser /data
 USER appuser
 EXPOSE 8080

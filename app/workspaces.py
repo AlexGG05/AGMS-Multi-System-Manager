@@ -5,7 +5,7 @@ import bcrypt
 from fastapi import APIRouter, Request, HTTPException, BackgroundTasks
 from fastapi.responses import JSONResponse
 from .mailer import send_email
-from . import features, operations
+from . import features, operations, remote_sessions
 
 EMAIL = re.compile(r"^[^\s@]{1,64}@[^\s@]{1,190}\.[^\s@]{2,}$")
 ROLES = {"owner", "editor", "viewer"}
@@ -92,6 +92,10 @@ def install(db):
     db.execute("INSERT OR IGNORE INTO account_security(username,verified_at,tier) SELECT username,unixepoch(),0 FROM users WHERE username=?", (os.getenv("ADMIN_USERNAME","admin"),))
     db.execute("INSERT OR IGNORE INTO account_profiles(username,email,role) SELECT username, CASE WHEN instr(username,'@')>0 THEN lower(username) ELSE NULL END, 'admin' FROM users WHERE username=?", (os.getenv("ADMIN_USERNAME","admin"),))
 
+    for name,definition in [('tile_width','INTEGER NOT NULL DEFAULT 1'),('tile_height','INTEGER NOT NULL DEFAULT 1')]:
+        if name not in {r[1] for r in db.execute('PRAGMA table_info(workspace_navigation)')}:db.execute('ALTER TABLE workspace_navigation ADD COLUMN '+name+' '+definition)
+    if 'layout_revision' not in {r[1] for r in db.execute('PRAGMA table_info(workspaces)')}:db.execute('ALTER TABLE workspaces ADD COLUMN layout_revision INTEGER NOT NULL DEFAULT 0')
+    remote_sessions.install(db)
     features.install(db)
 
 def router(connect, require, csrf, serializer, secure, origin):
@@ -408,6 +412,8 @@ def router(connect, require, csrf, serializer, secure, origin):
         with connect() as db:
             membership(db,wsid,username,owner=True)
             operations.audit(db,wsid,username,'homepage.deleted',{})
+            db.execute('DELETE FROM remote_sessions WHERE workspace_id=?',(wsid,))
+            db.execute('DELETE FROM remote_connections WHERE workspace_id=?',(wsid,))
             db.execute("DELETE FROM service_dependencies WHERE workspace_id=?",(wsid,))
             db.execute("DELETE FROM service_history WHERE workspace_id=?",(wsid,))
             db.execute("DELETE FROM workspace_invitations WHERE workspace_id=?",(wsid,))
@@ -430,8 +436,8 @@ def router(connect, require, csrf, serializer, secure, origin):
         username=identity(request)
         with connect() as db:
             role=membership(db,wsid,username)
-            w=db.execute("SELECT id,name FROM workspaces WHERE id=?",(wsid,)).fetchone()
-            nav=db.execute("SELECT id,parent_id,title,icon,url,position,min_role,open_mode,favorite,color,icon_url FROM workspace_navigation WHERE workspace_id=? ORDER BY position,id",(wsid,)).fetchall()
+            w=db.execute("SELECT id,name,layout_revision FROM workspaces WHERE id=?",(wsid,)).fetchone()
+            nav=db.execute("SELECT id,parent_id,title,icon,url,position,min_role,open_mode,favorite,color,icon_url,tile_width,tile_height FROM workspace_navigation WHERE workspace_id=? ORDER BY position,id",(wsid,)).fetchall()
             editable=workspace_editable(db,wsid)
         order={"viewer":0,"editor":1,"owner":2}
         return {"workspace":dict(w),"role":role,"editable":editable,"navigation":[dict(n) for n in nav if order[role]>=order[n["min_role"]]]}
@@ -493,7 +499,7 @@ def router(connect, require, csrf, serializer, secure, origin):
             parent=item.get("parent_id");parent=str(parent) if parent else None
             min_role=str(item.get("min_role","viewer"))
             open_mode=str(item.get("open_mode","embed"))
-            if open_mode not in ("embed","external","proxy"): raise HTTPException(400,"Invalid open mode")
+            if open_mode not in ("embed","external","proxy","ssh","rdp"): raise HTTPException(400,"Invalid open mode")
             if open_mode=="proxy":
                 proxy_url=urlparse(str(item.get("url","")))
                 if proxy_url.scheme!="https" or not proxy_url.hostname or proxy_url.username or proxy_url.password or proxy_url.fragment:
@@ -506,13 +512,20 @@ def router(connect, require, csrf, serializer, secure, origin):
                 parsed=urlparse(icon_url)
                 if parsed.scheme!="https" or not parsed.hostname or parsed.username or parsed.password or len(icon_url)>2048: raise HTTPException(400,"Invalid icon URL")
             if ident in ids or not 1<=len(title)<=80 or len(icon)>40 or min_role not in ROLES or (parent and parent==ident): raise HTTPException(400,"Invalid item")
-            ids.add(ident);cleaned.append((ident,wsid,parent,title,icon,clean_url(item.get("url")),i,min_role,open_mode,favorite,color,icon_url))
+            width=item.get('tile_width',1);height=item.get('tile_height',1)
+            if type(width)!=int or type(height)!=int or not 1<=width<=4 or not 1<=height<=4:raise HTTPException(400,'Invalid tile dimensions')
+            target_url=(open_mode+'://connection') if open_mode in ('ssh','rdp') else clean_url(item.get('url'))
+            ids.add(ident);cleaned.append((ident,wsid,parent,title,icon,target_url,i,min_role,open_mode,favorite,color,icon_url,width,height))
         for row in cleaned:
             if row[2] and row[2] not in ids: raise HTTPException(400,"Unknown parent")
             if row[2] and next(x for x in cleaned if x[0]==row[2])[2]: raise HTTPException(400,"Nested groups are not supported")
         with connect() as db:
             membership(db,wsid,username,edit=True)
             require_workspace_editable(db,wsid)
+            revision=db.execute('SELECT layout_revision FROM workspaces WHERE id=?',(wsid,)).fetchone()['layout_revision']
+            if 'revision' in body and (type(body['revision'])!=int or body['revision']!=revision):raise HTTPException(409,'This homepage was changed elsewhere. Reload before saving; your changes have not been overwritten.')
+            updated=db.execute('UPDATE workspaces SET layout_revision=layout_revision+1 WHERE id=? AND layout_revision=?',(wsid,revision))
+            if updated.rowcount!=1:raise HTTPException(409,'This homepage was changed elsewhere. Reload before saving; your changes have not been overwritten.')
             proxy_origins=set()
             for row in cleaned:
                 if row[8]=="proxy":
@@ -526,14 +539,32 @@ def router(connect, require, csrf, serializer, secure, origin):
                     db.execute("INSERT INTO workspace_notifications(id,username,workspace_id,message) VALUES(?,?,?,?)",
                                (secrets.token_hex(12),os.getenv("ADMIN_USERNAME","admin"),None,
                                 "Neue Proxy-Freigabe angefragt: "+origin+" (von "+username+")"))
-            old={r['id']:dict(r) for r in db.execute('SELECT * FROM workspace_navigation WHERE workspace_id=?',(wsid,))}
-            new={r[0]:dict(zip(('id','workspace_id','parent_id','title','icon','url','position','min_role','open_mode','favorite','color','icon_url'),r)) for r in cleaned}
+            old_rows=list(db.execute('SELECT * FROM workspace_navigation WHERE workspace_id=? ORDER BY position,id',(wsid,)))
+            old={r['id']:dict(r) for r in old_rows}
+            member_role=membership(db,wsid,username,edit=True)
+            rank={'viewer':0,'editor':1,'owner':2}
+            hidden={r['id'] for r in old_rows if rank[member_role]<rank[r['min_role']]}
+            if hidden & ids:raise HTTPException(403,'Cannot modify tiles requiring a higher role')
+            if any(r['id'] in hidden and r['parent_id'] and r['parent_id'] not in ids and r['parent_id'] not in hidden for r in old_rows):raise HTTPException(403,'A group contains protected tiles and cannot be deleted')
+            if hidden:
+                # The editor only received visible rows. Preserve higher-role tiles
+                # in their old slots instead of deleting them during replacement.
+                fields=('id','workspace_id','parent_id','title','icon','url','position','min_role','open_mode','favorite','color','icon_url','tile_width','tile_height')
+                pending=list(cleaned);merged=[]
+                for row in old_rows:
+                    if row['id'] in hidden:merged.append(tuple(row[f] for f in fields))
+                    elif pending:merged.append(pending.pop(0))
+                merged.extend(pending)
+                cleaned=[tuple(list(row[:6])+[i]+list(row[7:])) for i,row in enumerate(merged)]
+            new={r[0]:dict(zip(('id','workspace_id','parent_id','title','icon','url','position','min_role','open_mode','favorite','color','icon_url','tile_width','tile_height'),r)) for r in cleaned}
             changes={'added':[{'id':k,'title':new[k]['title']} for k in new.keys()-old.keys()], 'removed':[{'id':k,'title':old[k]['title']} for k in old.keys()-new.keys()], 'changed':[{'id':k,'title':new[k]['title'],'fields':[f for f in new[k] if new[k][f]!=old[k].get(f)]} for k in new.keys()&old.keys() if any(new[k][f]!=old[k].get(f) for f in new[k])]}
             if any(changes.values()):operations.audit(db,wsid,username,'navigation.updated',changes)
             db.execute("DELETE FROM workspace_navigation WHERE workspace_id=?",(wsid,))
-            db.executemany("INSERT INTO workspace_navigation(id,workspace_id,parent_id,title,icon,url,position,min_role,open_mode,favorite,color,icon_url) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",cleaned)
+            db.executemany("INSERT INTO workspace_navigation(id,workspace_id,parent_id,title,icon,url,position,min_role,open_mode,favorite,color,icon_url,tile_width,tile_height) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",cleaned)
+            db.execute('DELETE FROM remote_connections WHERE workspace_id=? AND item_id NOT IN (SELECT id FROM workspace_navigation WHERE workspace_id=?)',(wsid,wsid))
+            db.execute('DELETE FROM remote_sessions WHERE workspace_id=? AND item_id NOT IN (SELECT id FROM workspace_navigation WHERE workspace_id=?)',(wsid,wsid))
             db.execute('DELETE FROM service_dependencies WHERE workspace_id=? AND (service_id NOT IN (SELECT id FROM workspace_navigation WHERE workspace_id=?) OR depends_on NOT IN (SELECT id FROM workspace_navigation WHERE workspace_id=?))',(wsid,wsid,wsid))
-        return {"ok":True}
+        return {"ok":True,"revision":revision+1}
     @api.get("/api/workspaces/{wsid}/members")
     def members(request:Request,wsid:str):
         username=identity(request)
@@ -696,6 +727,8 @@ def router(connect, require, csrf, serializer, secure, origin):
                 db.execute('DELETE FROM notification_email_outbox WHERE notification_id IN (SELECT id FROM workspace_notifications WHERE workspace_id=?)',(wsid,))
                 db.execute("DELETE FROM workspace_notifications WHERE workspace_id=?",(wsid,))
                 operations.audit(db,wsid,admin,'homepage.deleted',{})
+                db.execute('DELETE FROM remote_connections WHERE workspace_id=?',(wsid,))
+                db.execute('DELETE FROM remote_sessions WHERE workspace_id=?',(wsid,))
                 db.execute("DELETE FROM service_dependencies WHERE workspace_id=?",(wsid,))
                 db.execute("DELETE FROM service_history WHERE workspace_id=?",(wsid,))
                 db.execute("DELETE FROM workspace_invitations WHERE workspace_id=?",(wsid,))
@@ -715,6 +748,8 @@ def router(connect, require, csrf, serializer, secure, origin):
             db.execute("DELETE FROM workspace_notifications WHERE ticket_id IN (SELECT id FROM support_tickets WHERE username=?)",(username,))
             db.execute("DELETE FROM support_ticket_numbers WHERE ticket_id IN (SELECT id FROM support_tickets WHERE username=?)",(username,))
             db.execute("DELETE FROM support_tickets WHERE username=?",(username,))
+            db.execute('DELETE FROM remote_sessions WHERE username=?',(username,))
+            db.execute('DELETE FROM remote_session_attempts WHERE username=?',(username,))
             db.execute("DELETE FROM account_profiles WHERE username=?",(username,))
             db.execute("DELETE FROM users WHERE username=?",(username,))
         return {"ok":True}
@@ -730,5 +765,6 @@ def router(connect, require, csrf, serializer, secure, origin):
             db.execute("INSERT INTO account_security(username,tier) VALUES(?,?) ON CONFLICT(username) DO UPDATE SET tier=excluded.tier",(username,level))
             db.execute("UPDATE account_profiles SET role=? WHERE username=?",("premium" if level else "user",username))
         return {"ok":True,"tier":level}
+    api.include_router(remote_sessions.router(connect,identity,csrf,membership,require_workspace_editable,serializer,origin))
     api.include_router(features.router(connect,identity,csrf,require_admin,authorized_ticket,is_admin,workspace_editable))
     return api

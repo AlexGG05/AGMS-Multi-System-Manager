@@ -1,0 +1,29 @@
+# Optional bundled Apache Guacamole gateway. No host ports or separate web login.
+# docker compose -f compose.yaml -f compose.remote.yaml up -d --build
+services:
+  dashboard:
+    environment:
+      GUACD_HOST: guacd
+      GUACD_PORT: "4822"
+  guacd:
+    image: guacamole/guacd:1.6.0
+    restart: unless-stopped
+    environment:
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      ALL_PROXY: ""
+      http_proxy: ""
+      https_proxy: ""
+      all_proxy: ""
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+      - /home/guacd:size=16m,uid=1000,gid=1000,mode=700
+    mem_limit: 512m
+    cpus: 1.0
+    # No ports mapping: guacd must never be exposed directly to the Internet.
+    # For private RDP CAs, extend this image's system CA trust store; see docs/REMOTE-ACCESS.md.
