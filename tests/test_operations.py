@@ -60,14 +60,14 @@ class OperationsTest(unittest.TestCase):
         def api(url,**kwargs):
             if 'type=node' in url:
                 self.assertEqual(kwargs['headers']['Authorization'],'PVEAPIToken=reader@pve!dashboard=secret-value')
-                return {'data':[{'cpu':0.25}]}
-            if 'type=vm' in url:return {'data':[{'status':'running'},{'status':'stopped'}]}
+                return {'data':[{'cpu':0.25,'mem':4,'maxmem':16}]}
+            if 'type=vm' in url:return {'data':[{'type':'qemu','status':'running'},{'type':'qemu','status':'stopped'},{'type':'lxc','status':'running'}]}
             self.assertEqual(kwargs['headers']['X-Api-Key'],'arcane-secret-value')
             if url.endswith('/containers'):return {'data':[{'state':'running'},{'state':'exited'}]}
             return {'data':[{'id':'env-1'}]}
         with patch('app.operations.public_net.request',side_effect=api):
             widgets=self.client.get('/api/widgets').json()['data']
-        self.assertEqual(widgets['proxmox'],{'configured':True,'nodes':1,'running_guests':1,'cpu_percent':25.0})
+        self.assertEqual(widgets['proxmox'],{'configured':True,'nodes':1,'vms_total':2,'vms_running':1,'lxc_total':1,'lxc_running':1,'cpu_percent':25.0,'ram_percent':25.0})
         self.assertEqual(widgets['arcane'],{'configured':True,'containers':2,'running':1})
         self.login('premium@example.test')
         self.assertEqual(self.client.get('/api/account/widget-connections').json()['connections'],{})
@@ -78,6 +78,16 @@ class OperationsTest(unittest.TestCase):
         self.assertNotIn('proxmox',self.client.get('/api/account/widget-connections').json()['connections'])
         for kind,token in [('bad','token'),('arcane','bad\nheader'),('proxmox','invalid')]:
             self.assertEqual(self.client.put('/api/account/widget-connection',json={'kind':kind,'url':'https://api.example','token':token},headers=self.headers()).status_code,400)
+
+    def test_proxmox_summary_types_and_memory_capacity(self):
+        nodes=[{'cpu':0.2,'mem':8,'maxmem':16},{'cpu':0.6,'mem':16,'maxmem':64},{}]
+        guests=[{'kind':'qemu','status':'running'},{'type':'qemu','status':'stopped'},
+                {'kind':'lxc','status':'running'},{'type':'lxc','status':'stopped'},{'type':'storage','status':'running'}]
+        summary=operations.proxmox_summary(nodes,guests)
+        self.assertEqual(summary,{'configured':True,'nodes':3,'vms_total':2,'vms_running':1,'lxc_total':2,'lxc_running':1,'cpu_percent':40.0,'ram_percent':30.0})
+        missing=operations.proxmox_summary([{'mem':0,'maxmem':0}],[])
+        self.assertIsNone(missing['cpu_percent']);self.assertIsNone(missing['ram_percent'])
+        self.assertEqual(missing['vms_total'],0);self.assertEqual(missing['lxc_running'],0)
 
     def test_existing_sabnzbd_connection_migrates_without_losing_credentials(self):
         from app.integrations import cipher

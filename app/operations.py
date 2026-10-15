@@ -10,6 +10,18 @@ DEFAULT={'refresh_seconds':60,'widgets':[]}
 DE_EXPIRY_NOTE='Public expiry dates are not published for .de domains. Enter the renewal date from your registrar.'
 
 
+def proxmox_summary(nodes,guests,configured=True):
+    vms=[g for g in guests if g.get('type',g.get('kind'))=='qemu']
+    containers=[g for g in guests if g.get('type',g.get('kind'))=='lxc']
+    cpus=[n['cpu'] for n in nodes if isinstance(n.get('cpu'),(int,float))]
+    memory=[n for n in nodes if isinstance(n.get('mem'),(int,float)) and isinstance(n.get('maxmem'),(int,float)) and n['maxmem']>0]
+    return {'configured':configured,'nodes':len(nodes),
+            'vms_total':len(vms),'vms_running':sum(g.get('status')=='running' for g in vms),
+            'lxc_total':len(containers),'lxc_running':sum(g.get('status')=='running' for g in containers),
+            'cpu_percent':round(sum(cpus)/len(cpus)*100,1) if cpus else None,
+            'ram_percent':round(sum(n['mem'] for n in memory)/sum(n['maxmem'] for n in memory)*100,1) if memory else None}
+
+
 def personal_widget(kind,connection):
     from .integrations import cipher
     token=cipher().decrypt(connection['token']).decode()
@@ -18,7 +30,7 @@ def personal_widget(kind,connection):
         headers={'Authorization':'PVEAPIToken='+token}
         nodes=public_net.request(base+'/api2/json/cluster/resources?type=node',headers=headers)['data']
         guests=public_net.request(base+'/api2/json/cluster/resources?type=vm',headers=headers)['data']
-        return {'configured':True,'nodes':len(nodes),'running_guests':sum(g.get('status')=='running' for g in guests),'cpu_percent':round(sum(n.get('cpu',0) for n in nodes)/max(1,len(nodes))*100,1)}
+        return proxmox_summary(nodes,guests)
     from .arcane import _items
     headers={'X-Api-Key':token}
     environments=_items(public_net.request(base+'/api/environments',headers=headers))
@@ -270,7 +282,7 @@ def router(connect,identity,csrf,require_admin,workspace_editable=None):
                     from .main import proxmox
                     result=await proxmox(request)
                     if not isinstance(result,dict):raise ValueError()
-                    data[kind]={'configured':result['configured'],'nodes':len(result['nodes']),'running_guests':sum(g['status']=='running' for g in result['guests']),'cpu_percent':round(sum(n['cpu'] for n in result['nodes'])/max(1,len(result['nodes']))*100,1)}
+                    data[kind]=proxmox_summary(result['nodes'],result['guests'],result['configured'])
                 else:
                     from .arcane import get_arcane
                     result=await get_arcane()

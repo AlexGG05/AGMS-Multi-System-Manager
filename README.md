@@ -314,3 +314,5 @@ it disables real push delivery and external expiry checks. Use a separate test
 process, never import the fixture into a production application process.
 
 Personal homepage API widgets for SABnzbd, Proxmox and Arcane can be configured in Profile → Dashboard preferences. Each connection is private to its account; API credentials are encrypted and never returned to the browser. Use a public HTTPS endpoint with trusted TLS. Proxmox expects a read-only `user@realm!token-id=token-secret` token; Arcane uses an API key with environment/container read access. Blank credentials preserve an existing connection only when the URL is unchanged. The central Proxmox/Arcane server configuration remains an administrator-only fallback. Service dependencies have been removed from Monitoring.
+
+The Proxmox homepage widget separates total/running QEMU VMs and LXC containers, and shows node count, average node CPU utilization, and RAM usage (used/total memory across nodes). Missing utilization data is displayed as an em dash.
