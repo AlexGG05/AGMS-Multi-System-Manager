@@ -40,3 +40,42 @@ class ProxyPathsTest(unittest.TestCase):
             self.assertEqual(request.call_args.args[1],'https://example.test/assets/app.js')
         self.login('viewer')
         self.assertEqual(self.client.get('/web-proxy/webui-test/bookstack/dashboard').status_code,404)
+
+    def test_sabnzbd_relative_login_form_preserves_session(self):
+        self.client.base_url='https://testserver'
+        self.login(main.ADMIN)
+        with main.connect() as db:
+            db.execute("INSERT INTO proxy_allowed_origins(origin,approved_by) VALUES ('https://example.test',?)",(main.ADMIN,))
+        calls=[]
+        async def upstream(method,target,**kwargs):
+            calls.append((method,target,kwargs))
+            if method=='POST':
+                self.assertEqual(target,'https://example.test/login/')
+                return httpx.Response(302,headers=[('location','/'),('set-cookie','login_cookie=fixture-session; Path=/; HttpOnly'),('set-cookie','login_salt=123; Path=/; HttpOnly')])
+            if target.endswith('/login/'):
+                return httpx.Response(200,text='<html><head></head><body><form action="./" method="post"><button>Login</button></form></body></html>',headers={'content-type':'text/html'})
+            self.assertEqual(kwargs['cookies'],{'login_cookie':'fixture-session','login_salt':'123'})
+            self.assertNotIn('session',kwargs['cookies'])
+            return httpx.Response(200,text='Authenticated SABnzbd fixture')
+        with patch('app.web_proxy.socket.getaddrinfo',return_value=[(2,1,6,'',('93.184.216.34',443))]),patch('app.web_proxy.httpx.AsyncClient') as client:
+            client.return_value.__aenter__.return_value.request=AsyncMock(side_effect=upstream)
+            prefix='/web-proxy/webui-test/bookstack'
+            page=self.client.get(prefix+'/login/')
+            self.assertIn('action="'+prefix+'/login/"',page.text)
+            self.assertIn('<base href="'+prefix+'/">',page.text)
+            response=self.client.post(prefix+'/login/',data={'username':'fixture','password':'fixture'},headers={'Origin':main.ORIGIN})
+            self.assertEqual(response.status_code,200)
+            self.assertEqual(response.text,'Authenticated SABnzbd fixture')
+            self.assertEqual(len(calls),3)
+            self.client.get(prefix+'/')
+            self.assertEqual(len(calls),4)
+
+    def test_form_targets_respect_document_path_and_original_base(self):
+        from app.web_proxy import rewrite_markup
+        prefix='/web-proxy/ws/item'
+        markup='<form action="./"><button formaction="../logout/">Logout</button></form>'
+        rewritten=rewrite_markup(markup,'https://example.test',prefix,'https://example.test/sabnzbd/login/')
+        self.assertIn('action="'+prefix+'/sabnzbd/login/"',rewritten)
+        self.assertIn('formaction="'+prefix+'/sabnzbd/logout/"',rewritten)
+        rewritten=rewrite_markup('<base href="/custom/"><form action=./>','https://example.test',prefix,'https://example.test/login/')
+        self.assertIn('action="'+prefix+'/custom/"',rewritten)
