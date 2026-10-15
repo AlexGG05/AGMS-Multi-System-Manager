@@ -167,3 +167,14 @@ addresses, redirects, embedded credentials and unsupported ports are rejected.
 Ports 80, 443, 8080 and 8443 are supported. Reverse-proxy subpaths are supported
 when the URL ends in `/status/<slug>`; custom-domain root URLs need that explicit
 path too. Existing AGMS service reachability remains available below Kuma.
+
+### Proxy start paths and Uptime Kuma administration
+
+A proxied WebUI can use a start path, for example
+`https://kuma.example.com/dashboard`. Approval still applies only to the HTTPS
+origin (`https://kuma.example.com`); requests for assets and WebSockets remain
+rooted at that origin. AGMS supplies a proxy-aware HTML base for applications
+such as Uptime Kuma whose Vue Router otherwise interprets the AGMS prefix as an
+unknown route. Existing application base tags are preserved and rewritten.
+The Kuma administration dashboard is separate from public status-page entries:
+those still require a published `/status/<slug>` URL.

@@ -70,7 +70,7 @@ def setup(connect, require):
                 origin = urlunsplit((base.scheme, base.netloc, "", "", "")).lower()
                 approved = db.execute("SELECT 1 FROM proxy_allowed_origins WHERE origin=?", (origin,)).fetchone()
             if (base.scheme != "https" or not base.hostname or base.username or base.password or
-                    base.path not in ("", "/") or base.query or base.fragment or
+                    base.fragment or
                     (not approved and origin not in allowed_origins()) or ".." in path.split("/")):
                 await ws.close(code=1008)
                 return
@@ -132,8 +132,8 @@ def setup(connect, require):
         with connect() as db:
             approved = db.execute("SELECT 1 FROM proxy_allowed_origins WHERE origin=?", (origin,)).fetchone()
         if ((not approved and origin not in allowed_origins()) or base.scheme != "https" or base.username or base.password
-                or base.path not in ("", "/") or base.query or base.fragment):
-            raise HTTPException(403, "Proxy origin not allowed or URL contains a path")
+                or base.fragment):
+            raise HTTPException(403, "Proxy origin not allowed or invalid URL")
         # Refuse localhost/private/link-local destinations even if an admin accidentally approves them.
         try:
             addresses = socket.getaddrinfo(base.hostname, base.port or 443, type=socket.SOCK_STREAM)
@@ -174,7 +174,12 @@ def setup(connect, require):
         if "text/html" in ctype or "text/css" in ctype:
             markup = rewrite_markup(data.decode("utf-8", errors="replace"), origin, prefix)
             if "text/html" in ctype:
-                shim = ('<script src="/static/proxy-shim.js" data-prefix="' + escape(prefix, quote=True) +
+                # Vue Router reads <base> when no explicit history base is set.
+                # Keep an application's own base (already rewritten above).
+                existing_base = re.search(r'(?is)<base\b[^>]*>', markup)
+                base_tag = existing_base.group(0) if existing_base else '<base href="' + escape(prefix + '/', quote=True) + '">'
+                markup = re.sub(r'(?is)<base\b[^>]*>', '', markup)
+                shim = (base_tag + '<script src="/static/proxy-shim.js" data-prefix="' + escape(prefix, quote=True) +
                         '" data-upstream="' + escape(origin, quote=True) +
                         '" data-cookie-prefix="' + escape("agms_proxy_" + itemid + "_", quote=True) +
                         '"></script>')

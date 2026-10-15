@@ -37,11 +37,11 @@ function openFrame(item){
  try{
   const u=new URL(item.url);
   if(!['http:','https:'].includes(u.protocol))throw Error('URL');
-  if(item.open_mode==='proxy'&&(u.protocol!=='https:'||u.pathname!=='/'||u.search||u.hash)){notify('Proxy benötigt eine HTTPS-Adresse ohne Unterpfad');return}
+  if(item.open_mode==='proxy'&&(u.protocol!=='https:'||u.username||u.password||u.hash)){notify('Proxy requires an HTTPS URL without credentials or a fragment');return}
   const route='/webui/'+encodeURIComponent(workspace.id)+'/'+encodeURIComponent(item.id)+'/';
   // A real navigation makes the extension re-evaluate this service's tab URL.
   if(location.pathname!==route){location.assign(route);return}
-  $('webFrame').src=item.open_mode==='proxy'?'/web-proxy/'+encodeURIComponent(workspace.id)+'/'+encodeURIComponent(item.id)+'/':u.href;
+  $('webFrame').src=item.open_mode==='proxy'?'/web-proxy/'+encodeURIComponent(workspace.id)+'/'+encodeURIComponent(item.id)+u.pathname+u.search:u.href;
   $('external').href=u.href;$('frameTitle').textContent=item.title;$('breadcrumb').textContent=workspace.name+(item.open_mode==='proxy'?' / PROXY':' / WEBUI');$('pageTitle').textContent=item.title;panels('framePanel');
  }catch{notify('Ungültige WebUI-Adresse')}
 }

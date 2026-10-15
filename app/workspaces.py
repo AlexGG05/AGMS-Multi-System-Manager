@@ -484,7 +484,10 @@ def router(connect, require, csrf, serializer, secure, origin):
             min_role=str(item.get("min_role","viewer"))
             open_mode=str(item.get("open_mode","embed"))
             if open_mode not in ("embed","external","proxy"): raise HTTPException(400,"Invalid open mode")
-            if open_mode=="proxy" and (urlparse(str(item.get("url",""))).path not in ("","/") or urlparse(str(item.get("url",""))).scheme!="https"): raise HTTPException(400,"Proxy requires an HTTPS origin without a path")
+            if open_mode=="proxy":
+                proxy_url=urlparse(str(item.get("url","")))
+                if proxy_url.scheme!="https" or not proxy_url.hostname or proxy_url.username or proxy_url.password or proxy_url.fragment:
+                    raise HTTPException(400,"Proxy requires an HTTPS URL without credentials or a fragment")
             favorite=1 if item.get("favorite") else 0
             color=str(item.get("color") or "")
             if color and not re.fullmatch(r"#[0-9a-fA-F]{6}",color): raise HTTPException(400,"Invalid color")
