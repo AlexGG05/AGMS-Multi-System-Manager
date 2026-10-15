@@ -187,3 +187,9 @@ in the monitor list. The remaining selection still controls which children are
 shown. **Custom category name** restores a manually named heading using one **Category name** field. Existing entries keep
 their manual names until explicitly changed. A removed/unpublished header monitor
 shows a warning while retaining the saved title and child list.
+
+Use the **↑ / ↓** buttons in a Kuma card's header to move it earlier or later.
+Changes are saved immediately for the current user and survive reloads. The grid
+uses the saved entry order, including entries with the same category name.
+The first/last position disables the corresponding button. If saving fails,
+the existing order remains visible and an error is displayed.
