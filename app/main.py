@@ -97,6 +97,16 @@ async def bookstack_proxy_identity(request: Request, call_next):
 
 app.include_router(web_proxy.setup(connect, require))
 
+@app.get("/imprint", include_in_schema=False)
+@app.get("/impressum", include_in_schema=False)
+def legal_notice():
+    return FileResponse(Path(__file__).parent/"static"/"imprint.html")
+
+@app.get("/privacy", include_in_schema=False)
+@app.get("/datenschutz", include_in_schema=False)
+def privacy_policy():
+    return FileResponse(Path(__file__).parent/"static"/"privacy.html")
+
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request):
     username = user(request)

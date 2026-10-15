@@ -69,6 +69,7 @@ const placeholders={
 'Adresse, Antragsteller oder Status suchen …':'Search address, requester or status …',
 'Name der neuen Homepage':'Name of the new homepage'
 };
+Object.assign(translations,{"Impressum":"Legal notice","Datenschutzerklärung":"Privacy policy","Rechtliche Informationen":"Legal information"});
 Object.assign(translations,{"VMs gesamt":"VMs total","VMs laufend":"VMs running","LXC gesamt":"LXC total","LXC laufend":"LXC running","CPU-Auslastung":"CPU usage","RAM-Auslastung":"RAM usage"});
 Object.assign(translations,{"Proxmox-Widget-Verbindung":"Proxmox widget connection","Arcane-Widget-Verbindung":"Arcane widget connection","Basisadresse":"Base URL","Proxmox-API-Token":"Proxmox API token","Arcane-API-Schlüssel":"Arcane API key","Verwende ein Proxmox-API-Token mit Leserechten im Format user@realm!token-id=token-secret.":"Use a read-only Proxmox API token in user@realm!token-id=token-secret format.","Verwende einen Arcane-API-Schlüssel mit Leserechten für Umgebungen und Container.":"Use an Arcane API key with read access to environments and containers.","Widget-Verbindung entfernen":"Remove widget connection","Widget-Verbindung entfernt.":"Widget connection removed.","Gib die API-Zugangsdaten für diese Adresse ein":"Enter the API credential for this endpoint","Ungültige API-Zugangsdaten":"Invalid API credential","Richte die Widget-Verbindung im Profil ein.":"Configure the widget connection in your profile."});
 Object.assign(translations,{
