@@ -144,7 +144,7 @@ async def ssh_bridge(ws,config,address):
     if config.get('private_key'):
         keys=[await decode_key(config['private_key'],config.get('passphrase'))]
     async with asyncssh.connect(address,port=config['port'],username=config['username'],
-            password=config.get('password') or None,client_keys=keys,agent_path=None,
+            password=config.get('password') or None,client_keys=keys,agent_path=None,config=None,
             known_hosts=(),client_factory=lambda:PinnedSSHClient(config['fingerprint']),
             login_timeout=15,connect_timeout=15,keepalive_interval=20,keepalive_count_max=3) as connection:
         process=await connection.create_process(term_type='xterm-256color',term_size=(100,30),encoding=None)

@@ -49,7 +49,7 @@ Docker build uses the repository Dockerfile and the existing non-root/read-only 
 * Legacy external callers that omit a navigation revision remain compatible, but must send `revision` to opt into conflict protection.
 * Administrators must approve actual target addresses and provision credentials/verified SSH host keys or RDP certificate trust. No production endpoints are preapproved and no credentials are invented or replaced.
 * Actual deployment, production Windows authentication/certificates and capacity under the user's workload have not been exercised from the development environment.
-* GitHub's REST/GraphQL API is blocked in this environment (403). An actual `gh pr create --draft` attempt for the foundation branch failed; no PR was created. The review branches and PR descriptions are published for manual PR creation. This is an environment/access limitation, not an automatic approval-review rejection.
+* GitHub's REST/GraphQL API is blocked in this environment (403). Actual `gh pr create --draft` attempts for both review branches failed; no PRs were created. The review branches and PR descriptions are published for manual PR creation. This is an environment/access limitation, not an automatic approval-review rejection.
 
 ## Review branches and PR creation
 
