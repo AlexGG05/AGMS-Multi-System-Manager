@@ -142,13 +142,13 @@ The ARM64 workflow publishes `ghcr.io/alexgg05/agms-multi-system-manager:latest`
 - Attach up to three PNG, JPEG or WebP screenshots per submission (2 MB each, at most ten per ticket). Screenshots are stored in SQLite and are only accessible to the creator and administrators. They can also accompany a feedback reply. A reverse proxy must allow the application's maximum 9 MB ticket request size; for Nginx, configure an appropriate `client_max_body_size`, such as `10m`.
 - **Search everything** (or Ctrl/Cmd+K on the dashboard) searches permitted services, groups and ticket subjects/numbers across homepages. Normal users see their own tickets; administrators can search all tickets.
 - **Notification settings** are available in the sidebar and the bell menu. Bell categories can be switched independently. Ticket emails default to off and require configured SMTP and a verified email address. Email language can be English or German. Failed delivery is queued for up to five attempts, with a five-minute retry delay; ticket actions and bell notifications remain available. SMTP delivery was verified with mocked success/failure, not a live mail server.
-- **Status overview** is a separate left-navigation tab, with homepage/search filters and refresh controls. Public destinations are checked from the AGMS server with TLS verification; HTTP 5xx responses are marked Degraded. Private addresses and unsupported ports remain Not checked. This reports reachability rather than deep application health. Status requests use at most four concurrent checks, with a short browser cache.
+- **Monitoring** is the single sidebar tab for Uptime Kuma cards, followed by certificate/domain watches and service dependencies. The duplicate service-reachability list has been removed from this view; reachability remains on individual homepage tiles. Public checks retain TLS verification and private-address restrictions.
 
 Existing users, ticket numbers, descriptions and comments are preserved by additive SQLite migrations. No additional Compose volume or dependency is required.
 
 ### Uptime Kuma dashboards
 
-Open **Status overview → Add status entry**. Choose a custom category name
+Open **Monitoring → Add status entry**. Choose a custom category name
 (for example `vHosts`) or a monitor as the card heading, and the full published Kuma URL such as
 `https://status.example.com/status/homelab`. Select **Load monitors** to choose
 individual monitors, or leave all unselected to show the entire page with its
@@ -163,7 +163,7 @@ reach the page using a public IP and valid TLS certificate. Private/loopback
 addresses, redirects, embedded credentials and unsupported ports are rejected.
 Ports 80, 443, 8080 and 8443 are supported. Reverse-proxy subpaths are supported
 when the URL ends in `/status/<slug>`; custom-domain root URLs need that explicit
-path too. Existing AGMS service reachability remains available below Kuma.
+path too. Certificate and domain watches are displayed directly below Kuma, followed by service dependencies.
 
 ### Proxy start paths and Uptime Kuma administration
 
@@ -210,8 +210,8 @@ single column.
 
 ### Monitoring and automatic refresh
 
-The **Monitoring** sidebar tab contains service dependencies and certificate/domain
-expiry watches. The profile controls automatic refresh: disabled, 30 seconds,
+The **Monitoring** sidebar tab combines Kuma status-page cards with certificate/domain
+expiry watches directly below them, followed by service dependencies. The profile controls automatic refresh: disabled, 30 seconds,
 1, 2 or 5 minutes; the default is 1 minute. Checks run while the dashboard/status
 or monitoring page is visible. Editing a monitoring form pauses its automatic
 refresh. Status requests use the existing public-address restrictions and TLS
