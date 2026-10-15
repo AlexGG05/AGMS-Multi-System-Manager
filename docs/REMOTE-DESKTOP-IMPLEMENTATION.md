@@ -12,7 +12,7 @@ Existing code already provided a legacy `/api/dashboard` grid editor, encrypted 
 2. **Homepage and browser clients**: vendored terminal/Guacamole clients, connection editor and admin approval UI, opt-in live web desktop, explicit edit mode, touch/keyboard controls, mobile full-area sessions, translations, privacy additions, browser tests and PR CI.
 3. **Validation**: preserve existing regression behavior, exercise permission revocation/negative trust cases, build/start the container, and test real guacd/FreeRDP with NLA and a verified certificate pin.
 
-The foundation and browser commits are intended as stacked review changes. Deploy the combined result only after review. No push, merge, release or deployment to `main` is performed for this task. All application/database tests use fresh temporary databases; production volumes and credentials are untouched.
+The foundation and browser commits were prepared as stacked review changes. After validation, the project owner explicitly requested direct integration of the combined result into `main` on 2026-10-15. Production deployment remains an operator action. All application/database tests use fresh temporary databases; production volumes and credentials are untouched.
 
 ## Additive migration
 
@@ -56,4 +56,4 @@ Docker build uses the repository Dockerfile and the existing non-root/read-only 
 * Foundation: `feature/remote-sessions-core`, commit `a97a45b`, base `main`. [Open comparison](https://github.com/AlexGG05/AGMS-Multi-System-Manager/compare/main...feature/remote-sessions-core?expand=1), description: [remote-core-pr.md](reviews/remote-core-pr.md).
 * Browser/editor/desktop: `feature/remote-sessions-and-workspace-desktop`, based on the foundation branch. [Open stacked comparison](https://github.com/AlexGG05/AGMS-Multi-System-Manager/compare/feature/remote-sessions-core...feature/remote-sessions-and-workspace-desktop?expand=1), description: [workspace-desktop-pr.md](reviews/workspace-desktop-pr.md).
 
-Review the stacked result together. Merge the foundation first, then retarget the browser/editor PR to `main` if GitHub does not do so automatically. Neither branch is merged or deployed by this task. GitHub-hosted PR checks have been added but cannot run until a PR is opened.
+The combined result is integrated directly into `main` following the project owner’s subsequent instruction. The original review branches remain available for comparison. No production deployment is performed from this environment. GitHub-hosted PR checks have been added; local verification is documented above.
