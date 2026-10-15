@@ -3,20 +3,17 @@
 Lightweight, self-hosted homelab dashboard. Runs on Raspberry Pi OS 64-bit (ARM64) with Docker Compose.
 
 ## Implemented
-- Username/password login, bcrypt password hash, signed HTTP-only session cookie, 8-hour expiry
-- CSRF and Origin protection for mutations, basic login rate limiting
-- Dark responsive dashboard; seeded inventory of your Docker LXCs, Pi, dedicated LXCs, and infrastructure
-- Save web links for every service and open them in a new tab
-- Read-only Proxmox **cluster** monitoring: nodes, VMs, LXCs, CPU and RAM via official API
-- SQLite persistent storage; Docker health endpoint
+- Personal and shared homepages, service groups, favorites, tile/list views and navigation import/export
+- Embedded WebUIs, external links and administrator-approved HTTPS proxy origins
+- Multi-user accounts, team roles, email verification/recovery and optional TOTP/passkeys
+- Administrator panel, support tickets, comments, screenshots, service context and notifications
+- Global search, configurable homepage widgets and English/German interface
+- Service reachability/history, dependencies, public certificate/domain expiry watches and Uptime Kuma pages
+- Homepage audit history and opt-in ntfy, Gotify, Telegram and Discord notifications
+- Optional API integrations for Proxmox, Arcane and TrueNAS; availability depends on configured endpoints/API compatibility
+- Persistent SQLite storage and ARM64 Docker deployment
 
-## Not implemented yet
-- Live Docker/Arcane running/stopped/update counts (needs a verified Arcane API contract and access)
-- TrueNAS and FRITZ!Box telemetry
-- Browser SSH/console, container lifecycle actions, automatic updates, alerting, user management
-- Guacamole SSO; its dashboard entry is an external link
-
-The UI deliberately labels inventory counts separately from live metrics. Do not interpret static service counts as live health.
+Browser SSH/console, Guacamole SSO and FRITZ!Box telemetry are not implemented.
 
 ## Requirements
 - Raspberry Pi OS 64-bit, Docker Engine and Compose plugin
@@ -94,9 +91,9 @@ Log in, choose **Service URLs**, and set a full `https://...` URL for each servi
 ### Security notes
 - Never publish `.env`, API tokens, or the SQLite database.
 - The admin password in `.env` is used **only on first startup** to seed the database. Editing it later does not reset the password.
-- This v1 supports one seeded admin user, not multiple accounts or password recovery.
+- The configured administrator is seeded on first startup. Additional users register and verify their email; management access is role-based.
 - Login rate limiting is in memory per process; put rate limits and MFA/Access in the reverse proxy for internet-facing deployment.
-- Restrict dashboard access to trusted users; all logged-in users can edit service links.
+- Homepage membership and owner/editor/viewer roles control access and editing.
 - `PUBLIC_ORIGIN` must exactly match your HTTPS site; no trailing slash.
 - Back up the Docker volume regularly.
 
@@ -151,8 +148,8 @@ Existing users, ticket numbers, descriptions and comments are preserved by addit
 
 ### Uptime Kuma dashboards
 
-Open **Status overview → Add status entry**. Enter a title, your own category
-(for example `vHosts`), and the full published Kuma URL such as
+Open **Status overview → Add status entry**. Choose a custom category name
+(for example `vHosts`) or a monitor as the card heading, and the full published Kuma URL such as
 `https://status.example.com/status/homelab`. Select **Load monitors** to choose
 individual monitors, or leave all unselected to show the entire page with its
 Kuma groups. Multiple entries can use the same page with different selections.
@@ -210,3 +207,93 @@ gap (12px on small screens). Cards no longer wait for the tallest card in a row.
 The layout updates when card content, translations or available width change.
 Saved entry order and drag/move controls remain in effect; narrow screens use a
 single column.
+
+### Monitoring and automatic refresh
+
+The **Monitoring** sidebar tab contains service-check history (24 hours, 7 or 30
+days), observed outage spans, service dependencies and certificate/domain expiry
+watches. The profile controls automatic refresh: disabled, 30 seconds, 1, 2 or 5
+minutes; the default is 1 minute. Checks run while the dashboard/status or
+monitoring page is visible. Editing a monitoring form pauses its automatic
+refresh. Status requests use the existing public-address restrictions and TLS
+verification. At most one sample per service/minute is stored for 30 days.
+History starts with recorded checks; gaps are never treated as proven uptime.
+Dependencies are within a homepage, require editing rights and reject cycles.
+Only relationships between services visible to the viewer are returned.
+
+Certificate watches accept public HTTPS URLs. Domain watches use the public
+RDAP registry service (`rdap.org` and safely followed public HTTPS redirects).
+Not every registry publishes expiration dates. Unavailable/invalid TLS or registry
+responses show an explicit error instead of an invented date. Background checks
+run on due watches every six hours, and the bell/opt-in push channels warn within
+30 days of a known expiration. Manual checks are available in Monitoring.
+
+### Profile: widgets, push and optional sign-in security
+
+**Dashboard preferences** selects homepage widgets: own ticket counts, service
+status, expiry warnings, Proxmox summary, Arcane container counts and SABnzbd
+queue summary. Widgets default to off. Proxmox/Arcane use the administrator's
+configured API integrations and are restricted to administrators. The personal
+SABnzbd widget connection takes a public HTTPS base URL and API key in the profile;
+its API key is encrypted. No service-control actions are exposed by these widgets.
+
+**Push notifications** supports any combination of ntfy (full topic URL and
+optional bearer token), Gotify (server base URL and application token), Telegram
+(bot token and chat ID) and Discord (webhook URL). Each channel is explicitly
+opt-in, has a test button and can be disabled independently. Secrets are encrypted
+with a key derived from `SESSION_SECRET` and are not returned to the browser.
+Existing saved credentials can be retained without re-entering them. Failed
+notifications retry up to five times at five-minute intervals. Public HTTPS
+endpoints with verified certificates are required; private-IP destinations are
+blocked. Tests use fixtures/mocks rather than live external push accounts.
+
+**Sign-in security** offers optional TOTP and passkeys. TOTP enrollment requires
+the current password and confirmation of an authenticator code. A QR code/manual
+secret and ten single-use recovery codes are provided. TOTP secrets are encrypted;
+recovery codes are hashed and TOTP steps cannot be reused. Password sign-in asks
+for an authenticator or recovery code when TOTP is enabled. Disabling it requires
+the current password and a fresh authentication/recovery code.
+
+Passkey enrollment requires the current password and, if enabled, TOTP/recovery
+verification. WebAuthn challenges expire after five minutes and are single-use;
+the origin/RP ID and device user verification are checked. A verified passkey can
+sign in without the password/TOTP prompt. Passkeys can be named and removed in
+the profile. Production requires HTTPS at the stable `PUBLIC_ORIGIN`; changing
+the hostname means existing passkeys need re-enrollment for the new RP ID.
+Back up the database and `SESSION_SECRET` together: changing the secret prevents
+decryption of stored integration/push/TOTP credentials. Browser tests use a
+virtual WebAuthn authenticator, not a user's physical device or cloud account.
+
+### Administrator change history
+
+**Admin Panel → Change history** displays homepage/status-page tiles with the
+last editing account and timestamp. Opening one shows a paginated event list:
+homepage creation/rename/deletion, added/removed/changed/reordered navigation
+entries, team membership/invitations, dependencies and personal Kuma status-page
+configuration. Deleted homepages retain their recorded events. Logs are written
+with the successful database mutation; rejected changes do not produce events.
+This records activity from installation of this feature onward and does not
+reconstruct earlier edits. Non-administrators cannot access these logs.
+
+### Regression validation
+
+Run the API, migration and authorization tests in an isolated development environment:
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+The browser workflow additionally covers TOTP/recovery, virtual-authenticator
+WebAuthn registration/sign-in, profile settings, monitoring, widgets and admin
+history. Install Playwright outside the repository if needed, provide a Chromium
+executable, then run the fixture server and browser in separate terminals:
+
+```bash
+python tests/serve_operations_fixture.py
+PLAYWRIGHT_MODULE=/path/to/node_modules/playwright CHROMIUM_PATH=/usr/bin/chromium node tests/browser_operations.cjs
+PLAYWRIGHT_MODULE=/path/to/node_modules/playwright CHROMIUM_PATH=/usr/bin/chromium node tests/browser_refresh.cjs
+```
+
+The fixture uses localhost:8082, a temporary database and test-only credentials;
+it disables real push delivery and external expiry checks. Use a separate test
+process, never import the fixture into a production application process.

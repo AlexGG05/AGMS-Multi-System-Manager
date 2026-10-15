@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 from .inventory import GROUPS
 from .arcane import get_arcane, manage_container
-from . import integrations, workspaces, web_proxy, features
+from . import integrations, workspaces, web_proxy, features, operations, security_keys, push_channels
 
 DB = "/data/homelab.sqlite3"
 SECRET = os.environ.get("SESSION_SECRET", "")
@@ -42,22 +42,31 @@ async def start_notification_worker():
     async def retry_emails():
         while True:
             await asyncio.sleep(features.EMAIL_POLL_INTERVAL)
+            try:
+                await asyncio.to_thread(push_channels.deliver,connect)
+            except Exception as exc:
+                logging.getLogger(__name__).warning("Background work deferred: %s",type(exc).__name__)
             if os.getenv("SMTP_PASSWORD"):
                 try:
                     await asyncio.to_thread(features.deliver_pending,connect)
                 except sqlite3.Error as exc:
                     logging.getLogger(__name__).warning("Notification email retry deferred: %s",type(exc).__name__)
+    async def expiry_checks():
+        while True:
+            await asyncio.sleep(60)
+            try:await asyncio.to_thread(operations.check_due_watches,connect)
+            except Exception as exc:logging.getLogger(__name__).warning('Expiry checks deferred: %s',type(exc).__name__)
+    app.state.expiry_worker=asyncio.create_task(expiry_checks())
     app.state.notification_worker=asyncio.create_task(retry_emails())
 
 @app.on_event("shutdown")
 async def stop_notification_worker():
-    worker=getattr(app.state,"notification_worker",None)
-    if worker:
-        worker.cancel()
-        try:
-            await worker
-        except asyncio.CancelledError:
-            pass
+    for name in ('notification_worker','expiry_worker'):
+        worker=getattr(app.state,name,None)
+        if worker:
+            worker.cancel()
+            try:await worker
+            except asyncio.CancelledError:pass
 
 def user(request):
     cookie = request.cookies.get("session", "")
@@ -82,7 +91,9 @@ def csrf(request):
 
 @app.middleware("http")
 async def bookstack_proxy_identity(request: Request, call_next):
-    return await call_next(request)
+    response=await call_next(request)
+    if request.url.path.startswith(('/api/account/','/api/auth/','/api/monitoring','/api/admin/audit')):response.headers['Cache-Control']='no-store'
+    return response
 
 app.include_router(web_proxy.setup(connect, require))
 
@@ -125,13 +136,27 @@ async def login(request:Request):
             LIMIT 1""",(username.strip(),username.strip())).fetchone()
         username=resolved["username"] if resolved else ""
         row = db.execute("SELECT password_hash FROM users WHERE username=?",(username,)).fetchone()
-    if not row or not bcrypt.checkpw(password.encode(),row["password_hash"].encode()):
+    valid=False
+    if row:
+        try:valid=bcrypt.checkpw(password.encode(),row['password_hash'].encode())
+        except ValueError:pass
+    if not valid:
         failures[ip] = recent+[now]
         raise HTTPException(401,"Invalid credentials")
     with connect() as db:
         status=db.execute("SELECT verified_at FROM account_security WHERE username=?",(username,)).fetchone()
     if username!=ADMIN and (not status or not status["verified_at"]): raise HTTPException(403,"Please verify your email before login")
+    with connect() as db:
+        factor=db.execute("SELECT 1 FROM account_factors WHERE username=? AND enabled=1",(username,)).fetchone()
+        if factor:
+            if not body.get('code'):return JSONResponse({'totp_required':True})
+            if not security_keys.verify_code(db,username,body.get('code')):
+                failures[ip]=recent+[now]
+                raise HTTPException(401,'Invalid authentication code or recovery code')
     failures.pop(ip,None)
+    return session_response(username)
+
+def session_response(username):
     response=JSONResponse({"ok":True})
     response.set_cookie("session",serializer.dumps({"u":username}),httponly=True,secure=SECURE,samesite="lax",max_age=28800,path="/")
     response.set_cookie("csrf",secrets.token_urlsafe(32),httponly=False,secure=SECURE,samesite="lax",max_age=28800,path="/")
@@ -321,12 +346,18 @@ def integrations_delete(ident:int,request:Request):
 # New public accounts must never inherit the legacy single-admin management APIs.
 # Workspace APIs enforce membership and roles independently.
 app.include_router(workspaces.router(connect, require, csrf, serializer, SECURE, ORIGIN))
+app.include_router(security_keys.router(connect, require, csrf, ORIGIN, session_response))
 
 @app.middleware("http")
 async def legacy_admin_boundary(request:Request, call_next):
     path=request.url.path
     if path.startswith("/api/") and not (
         path in ("/api/login","/api/logout","/api/me","/api/register","/api/account/verify","/api/account/forgot-password","/api/account/reset-password")
+        or path.startswith("/api/account/")
+        or path.startswith("/api/auth/passkey/")
+        or path.startswith("/api/monitoring")
+        or path.startswith("/api/admin/audit")
+        or path=="/api/widgets"
         or path.startswith("/api/workspaces")
         or path.startswith("/api/notifications")
         or path in ("/api/kuma", "/api/kuma/preview")

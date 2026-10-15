@@ -18,6 +18,8 @@ DEFAULT_PREFS = {'ticket_bell': True, 'other_bell': True, 'ticket_email': False,
 
 
 def install(db):
+    from . import operations
+    operations.install(db)
     columns = {r[1] for r in db.execute('PRAGMA table_info(support_tickets)')}
     for name, definition in [('priority', "TEXT NOT NULL DEFAULT 'normal'"), ('assigned_to', 'TEXT'), ('workspace_id', 'TEXT'), ('service_id', 'TEXT'), ('service_title', 'TEXT'), ('service_url', 'TEXT')]:
         if name not in columns:
@@ -120,6 +122,8 @@ def ticket_service(db, username, body):
 
 
 def queue_email(db, notification_id, username):
+    from .push_channels import queue
+    queue(db, notification_id, username)
     prefs = preferences(db, username)
     if not prefs['ticket_email']:
         return
@@ -156,7 +160,7 @@ def deliver_pending(connect):
             db.execute('UPDATE notification_email_outbox SET sent_at=unixepoch() WHERE notification_id=?', (note['notification_id'],))
 
 
-def router(connect, identity, csrf, require_admin, authorized_ticket, is_admin):
+def router(connect, identity, csrf, require_admin, authorized_ticket, is_admin, workspace_editable=None):
     api = APIRouter()
 
     @api.get('/api/services')
@@ -237,6 +241,8 @@ def router(connect, identity, csrf, require_admin, authorized_ticket, is_admin):
             db.execute('UPDATE support_tickets SET priority=?,assigned_to=? WHERE id=?', (priority, assigned, ticket_id))
         return {'ok': True}
 
-    from . import kuma
+    from . import kuma, operations, push_channels
+    api.include_router(operations.router(connect, identity, csrf, require_admin, workspace_editable))
+    api.include_router(push_channels.router(connect, identity, csrf))
     api.include_router(kuma.router(connect, identity, csrf))
     return api

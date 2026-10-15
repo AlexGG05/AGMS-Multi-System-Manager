@@ -103,6 +103,10 @@ def router(connect, identity, csrf):
                 cleaned['header_monitor'] = header
             clean.append(cleaned)
         with connect() as db:
+            from .operations import audit
+            old=db.execute('SELECT settings FROM kuma_dashboards WHERE username=?',(username,)).fetchone()
+            previous=json.loads(old['settings']) if old else []
+            if previous!=clean:audit(db,'kuma:'+username,username,'status.updated',{'before':', '.join(e['title'] for e in previous),'after':', '.join(e['title'] for e in clean)})
             db.execute('INSERT INTO kuma_dashboards VALUES (?,?) ON CONFLICT(username) DO UPDATE SET settings=excluded.settings', (username, json.dumps(clean)))
         return {'ok': True}
 

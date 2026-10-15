@@ -5,7 +5,7 @@ import bcrypt
 from fastapi import APIRouter, Request, HTTPException, BackgroundTasks
 from fastapi.responses import JSONResponse
 from .mailer import send_email
-from . import features
+from . import features, operations
 
 EMAIL = re.compile(r"^[^\s@]{1,64}@[^\s@]{1,190}\.[^\s@]{2,}$")
 ROLES = {"owner", "editor", "viewer"}
@@ -249,6 +249,7 @@ def router(connect, require, csrf, serializer, secure, origin):
         wid=secrets.token_hex(12)
         db.execute("INSERT INTO workspaces(id,name,owner) VALUES(?,?,?)",(wid,"Mein Homelab",username))
         db.execute("INSERT INTO workspace_members(workspace_id,username,role) VALUES(?,?,'owner')",(wid,username))
+        operations.audit(db,wid,username,'homepage.created',{'name':'Mein Homelab'})
         db.execute("INSERT OR IGNORE INTO account_profiles(username,email,role) VALUES(?,?,?)",(username,username.lower() if '@' in username else None,'admin' if username==os.getenv('ADMIN_USERNAME','admin') else 'user'))
     def clean_url(url):
         if url is None or url=="": return None
@@ -371,6 +372,7 @@ def router(connect, require, csrf, serializer, secure, origin):
                 if db.execute("SELECT COUNT(*) FROM workspaces WHERE owner=?",(username,)).fetchone()[0]>=limit: raise HTTPException(403,"Homepage limit reached")
             db.execute("INSERT INTO workspaces(id,name,owner) VALUES(?,?,?)",(wid,name,username))
             db.execute("INSERT INTO workspace_members(workspace_id,username,role) VALUES(?,?,'owner')",(wid,username))
+            operations.audit(db,wid,username,'homepage.created',{'name':name})
         return {"id":wid,"name":name,"role":"owner"}
     @api.patch("/api/workspaces/{wsid}")
     async def rename_workspace(request:Request,wsid:str):
@@ -380,7 +382,9 @@ def router(connect, require, csrf, serializer, secure, origin):
         with connect() as db:
             membership(db,wsid,username,owner=True)
             require_workspace_editable(db,wsid)
+            before=db.execute("SELECT name FROM workspaces WHERE id=?",(wsid,)).fetchone()['name']
             db.execute("UPDATE workspaces SET name=? WHERE id=?",(name,wsid))
+            operations.audit(db,wsid,username,'homepage.renamed',{'before':before,'after':name})
         return {"ok":True,"name":name}
     @api.get("/api/notifications")
     def notifications(request:Request,background_tasks:BackgroundTasks):
@@ -403,6 +407,9 @@ def router(connect, require, csrf, serializer, secure, origin):
         username=identity(request);csrf(request)
         with connect() as db:
             membership(db,wsid,username,owner=True)
+            operations.audit(db,wsid,username,'homepage.deleted',{})
+            db.execute("DELETE FROM service_dependencies WHERE workspace_id=?",(wsid,))
+            db.execute("DELETE FROM service_history WHERE workspace_id=?",(wsid,))
             db.execute("DELETE FROM workspace_invitations WHERE workspace_id=?",(wsid,))
             db.execute("DELETE FROM workspace_navigation WHERE workspace_id=?",(wsid,))
             db.execute("DELETE FROM workspace_members WHERE workspace_id=?",(wsid,))
@@ -416,6 +423,7 @@ def router(connect, require, csrf, serializer, secure, origin):
             require_workspace_editable(db,wsid)
             if member==username: raise HTTPException(400,"Owner cannot be removed")
             db.execute("DELETE FROM workspace_members WHERE workspace_id=? AND username=? AND role!='owner'",(wsid,member))
+            operations.audit(db,wsid,username,'member.removed',{'member':member})
         return {"ok":True}
     @api.get("/api/workspaces/{wsid}")
     def workspace(request:Request,wsid:str):
@@ -469,7 +477,9 @@ def router(connect, require, csrf, serializer, secure, origin):
                 finally:sock.close()
             except (OSError,ssl.SSLError,ValueError,UnicodeError):
                 return {"status":"offline"}
-        return await asyncio.to_thread(check)
+        result=await asyncio.to_thread(check)
+        with connect() as db:operations.record(db,wsid,item_id,result)
+        return result
     @api.put("/api/workspaces/{wsid}/navigation")
     async def update_navigation(request:Request,wsid:str):
         username=identity(request);csrf(request)
@@ -516,8 +526,13 @@ def router(connect, require, csrf, serializer, secure, origin):
                     db.execute("INSERT INTO workspace_notifications(id,username,workspace_id,message) VALUES(?,?,?,?)",
                                (secrets.token_hex(12),os.getenv("ADMIN_USERNAME","admin"),None,
                                 "Neue Proxy-Freigabe angefragt: "+origin+" (von "+username+")"))
+            old={r['id']:dict(r) for r in db.execute('SELECT * FROM workspace_navigation WHERE workspace_id=?',(wsid,))}
+            new={r[0]:dict(zip(('id','workspace_id','parent_id','title','icon','url','position','min_role','open_mode','favorite','color','icon_url'),r)) for r in cleaned}
+            changes={'added':[{'id':k,'title':new[k]['title']} for k in new.keys()-old.keys()], 'removed':[{'id':k,'title':old[k]['title']} for k in old.keys()-new.keys()], 'changed':[{'id':k,'title':new[k]['title'],'fields':[f for f in new[k] if new[k][f]!=old[k].get(f)]} for k in new.keys()&old.keys() if any(new[k][f]!=old[k].get(f) for f in new[k])]}
+            if any(changes.values()):operations.audit(db,wsid,username,'navigation.updated',changes)
             db.execute("DELETE FROM workspace_navigation WHERE workspace_id=?",(wsid,))
             db.executemany("INSERT INTO workspace_navigation(id,workspace_id,parent_id,title,icon,url,position,min_role,open_mode,favorite,color,icon_url) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",cleaned)
+            db.execute('DELETE FROM service_dependencies WHERE workspace_id=? AND (service_id NOT IN (SELECT id FROM workspace_navigation WHERE workspace_id=?) OR depends_on NOT IN (SELECT id FROM workspace_navigation WHERE workspace_id=?))',(wsid,wsid,wsid))
         return {"ok":True}
     @api.get("/api/workspaces/{wsid}/members")
     def members(request:Request,wsid:str):
@@ -542,10 +557,12 @@ def router(connect, require, csrf, serializer, secure, origin):
                 previous=db.execute("SELECT role FROM workspace_members WHERE workspace_id=? AND username=?",(wsid,member)).fetchone()
                 if previous: raise HTTPException(409,"User is already a member")
                 db.execute("INSERT INTO workspace_members(workspace_id,username,role) VALUES(?,?,?)",(wsid,member,role))
+                operations.audit(db,wsid,username,'member.added',{'member':member,'role':role})
                 home=db.execute("SELECT name FROM workspaces WHERE id=?",(wsid,)).fetchone()
                 db.execute("INSERT INTO workspace_notifications(id,username,workspace_id,message) VALUES(?,?,?,?)",(secrets.token_hex(12),member,wsid,"Du wurdest zur Homepage „"+home["name"]+"“ hinzugefügt."))
                 return {"ok":True,"delivery":"in_app","added":True}
             db.execute("INSERT INTO workspace_invitations(id,workspace_id,email,role,token_hash,expires_at,created_by) VALUES(?,?,?,?,?,?,?)",(ident,wsid,email,role,hashlib.sha256(token.encode()).hexdigest(),expiry,username))
+            operations.audit(db,wsid,username,'member.invited',{'member':email,'role':role})
         send_email(email,"CodeX Homelab: Team-Einladung","Einladung annehmen: "+origin+"/static/invite.html?token="+token)
         return {"id":ident,"expires_at":expiry,"delivery":"smtp","added":False}
     @api.post("/api/invitations/accept")
@@ -559,6 +576,7 @@ def router(connect, require, csrf, serializer, secure, origin):
             if not profile or profile["email"]!=invite["email"]: raise HTTPException(403,"Invitation belongs to another email")
             db.execute("INSERT OR IGNORE INTO workspace_members(workspace_id,username,role) VALUES(?,?,?)",(invite["workspace_id"],username,invite["role"]))
             db.execute("UPDATE workspace_invitations SET accepted_at=? WHERE id=?",(int(time.time()),invite["id"]))
+            operations.audit(db,invite['workspace_id'],username,'member.accepted',{'member':username,'role':invite['role']})
         return {"ok":True,"workspace_id":invite["workspace_id"]}
 
     def token_action(db, token, purpose):
@@ -670,10 +688,16 @@ def router(connect, require, csrf, serializer, secure, origin):
         with connect() as db:
             if not db.execute("SELECT 1 FROM users WHERE username=?",(username,)).fetchone(): raise HTTPException(404,"Account not found")
             if db.execute("SELECT 1 FROM account_profiles WHERE username=? AND role='admin'",(username,)).fetchone(): raise HTTPException(400,"Admin account cannot be deleted")
+            db.execute("DELETE FROM push_outbox WHERE notification_id IN (SELECT id FROM workspace_notifications WHERE username=? OR ticket_id IN (SELECT id FROM support_tickets WHERE username=?))",(username,username))
             db.execute("DELETE FROM notification_email_outbox WHERE notification_id IN (SELECT id FROM workspace_notifications WHERE username=? OR ticket_id IN (SELECT id FROM support_tickets WHERE username=?))",(username,username))
             owned=[x[0] for x in db.execute("SELECT id FROM workspaces WHERE owner=?",(username,)).fetchall()]
             for wsid in owned:
+                db.execute('DELETE FROM push_outbox WHERE notification_id IN (SELECT id FROM workspace_notifications WHERE workspace_id=?)',(wsid,))
+                db.execute('DELETE FROM notification_email_outbox WHERE notification_id IN (SELECT id FROM workspace_notifications WHERE workspace_id=?)',(wsid,))
                 db.execute("DELETE FROM workspace_notifications WHERE workspace_id=?",(wsid,))
+                operations.audit(db,wsid,admin,'homepage.deleted',{})
+                db.execute("DELETE FROM service_dependencies WHERE workspace_id=?",(wsid,))
+                db.execute("DELETE FROM service_history WHERE workspace_id=?",(wsid,))
                 db.execute("DELETE FROM workspace_invitations WHERE workspace_id=?",(wsid,))
                 db.execute("DELETE FROM workspace_navigation WHERE workspace_id=?",(wsid,))
                 db.execute("DELETE FROM workspace_members WHERE workspace_id=?",(wsid,))
@@ -684,6 +708,8 @@ def router(connect, require, csrf, serializer, secure, origin):
             db.execute("DELETE FROM account_security WHERE username=?",(username,))
             db.execute("DELETE FROM notification_preferences WHERE username=?",(username,))
             db.execute("DELETE FROM kuma_dashboards WHERE username=?",(username,))
+            for table in ('widget_connections','user_preferences','expiry_watches','push_channels','account_factors','security_challenges','recovery_codes','passkeys'):
+                db.execute('DELETE FROM '+table+' WHERE username=?',(username,))
             db.execute("DELETE FROM ticket_attachments WHERE ticket_id IN (SELECT id FROM support_tickets WHERE username=?)",(username,))
             db.execute("DELETE FROM support_ticket_comments WHERE ticket_id IN (SELECT id FROM support_tickets WHERE username=?)",(username,))
             db.execute("DELETE FROM workspace_notifications WHERE ticket_id IN (SELECT id FROM support_tickets WHERE username=?)",(username,))
@@ -704,5 +730,5 @@ def router(connect, require, csrf, serializer, secure, origin):
             db.execute("INSERT INTO account_security(username,tier) VALUES(?,?) ON CONFLICT(username) DO UPDATE SET tier=excluded.tier",(username,level))
             db.execute("UPDATE account_profiles SET role=? WHERE username=?",("premium" if level else "user",username))
         return {"ok":True,"tier":level}
-    api.include_router(features.router(connect,identity,csrf,require_admin,authorized_ticket,is_admin))
+    api.include_router(features.router(connect,identity,csrf,require_admin,authorized_ticket,is_admin,workspace_editable))
     return api

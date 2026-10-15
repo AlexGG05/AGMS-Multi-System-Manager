@@ -37,7 +37,10 @@ class WebUiRoutesTest(unittest.TestCase):
         response=self.client.get('/webui/webui-test/arcane/')
         self.assertEqual(response.status_code,200)
         self.assertIn('loginForm',response.text)
-        self.assertIn("location.pathname.startsWith('/webui/')",response.text)
+        self.assertIn("/static/login.js?",response.text)
+        script=self.client.get("/static/login.js")
+        self.assertEqual(script.status_code,200)
+        self.assertIn("location.pathname.startsWith('/webui/')",script.text)
 
     def test_member_routes_serve_dashboard_and_enforce_item_permissions(self):
         self.login(main.ADMIN)

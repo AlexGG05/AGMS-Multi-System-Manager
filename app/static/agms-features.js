@@ -55,6 +55,7 @@ function decorate(){
   if(fav.length){favorites.append(make('h2','★ Favoriten'));const grid=make('div',undefined,'web-tiles');grid.classList.toggle('agms-list',view.value==='list');grid.append(...fav.map(tile));favorites.append(grid)}
  }
 }
+window.agmsRefreshHomeStatus=()=>{statusCache.clear();decorate()};
 renderNav=function(){origRenderNav();for(const b of $('groupNav').children){const name=b.textContent.replace(/^▤\s*/, '');const item=items.find(n=>!n.url&&n.title===name);if(item?.color)b.style.borderLeft='3px solid '+item.color}};
 showHome=function(){origShowHome();decorate()};
 // Core UI bound this click handler before enhancements replaced showHome.
