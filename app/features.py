@@ -23,6 +23,7 @@ def install(db):
         if name not in columns:
             db.execute('ALTER TABLE support_tickets ADD COLUMN ' + name + ' ' + definition)
     db.executescript('''
+    CREATE TABLE IF NOT EXISTS kuma_dashboards (username TEXT PRIMARY KEY, settings TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS ticket_attachments (
       id TEXT PRIMARY KEY, ticket_id TEXT NOT NULL, filename TEXT NOT NULL,
       content_type TEXT NOT NULL, content BLOB NOT NULL,
@@ -236,4 +237,6 @@ def router(connect, identity, csrf, require_admin, authorized_ticket, is_admin):
             db.execute('UPDATE support_tickets SET priority=?,assigned_to=? WHERE id=?', (priority, assigned, ticket_id))
         return {'ok': True}
 
+    from . import kuma
+    api.include_router(kuma.router(connect, identity, csrf))
     return api

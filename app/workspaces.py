@@ -680,6 +680,7 @@ def router(connect, require, csrf, serializer, secure, origin):
             db.execute("DELETE FROM account_tokens WHERE username=?",(username,))
             db.execute("DELETE FROM account_security WHERE username=?",(username,))
             db.execute("DELETE FROM notification_preferences WHERE username=?",(username,))
+            db.execute("DELETE FROM kuma_dashboards WHERE username=?",(username,))
             db.execute("DELETE FROM ticket_attachments WHERE ticket_id IN (SELECT id FROM support_tickets WHERE username=?)",(username,))
             db.execute("DELETE FROM support_ticket_comments WHERE ticket_id IN (SELECT id FROM support_tickets WHERE username=?)",(username,))
             db.execute("DELETE FROM workspace_notifications WHERE ticket_id IN (SELECT id FROM support_tickets WHERE username=?)",(username,))

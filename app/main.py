@@ -329,6 +329,7 @@ async def legacy_admin_boundary(request:Request, call_next):
         path in ("/api/login","/api/logout","/api/me","/api/register","/api/account/verify","/api/account/forgot-password","/api/account/reset-password")
         or path.startswith("/api/workspaces")
         or path.startswith("/api/notifications")
+        or path in ("/api/kuma", "/api/kuma/preview")
         or path in ("/api/services","/api/search","/api/notification-settings")
         or path=="/api/tickets"
         or path.startswith("/api/tickets/")

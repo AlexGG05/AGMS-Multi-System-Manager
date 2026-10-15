@@ -148,3 +148,22 @@ The ARM64 workflow publishes `ghcr.io/alexgg05/agms-multi-system-manager:latest`
 - **Status overview** is a separate left-navigation tab, with homepage/search filters and refresh controls. Public destinations are checked from the AGMS server with TLS verification; HTTP 5xx responses are marked Degraded. Private addresses and unsupported ports remain Not checked. This reports reachability rather than deep application health. Status requests use at most four concurrent checks, with a short browser cache.
 
 Existing users, ticket numbers, descriptions and comments are preserved by additive SQLite migrations. No additional Compose volume or dependency is required.
+
+### Uptime Kuma dashboards
+
+Open **Status overview → Add status entry**. Enter a title, your own category
+(for example `vHosts`), and the full published Kuma URL such as
+`https://status.example.com/status/homelab`. Select **Load monitors** to choose
+individual monitors, or leave all unselected to show the entire page with its
+Kuma groups. Multiple entries can use the same page with different selections.
+Configurations are personal to each AGMS user and can be edited or removed.
+**Refresh Kuma** updates the displayed state and 24-hour uptime; Kuma itself may
+cache page metadata for five minutes and heartbeat data for one minute.
+
+Only monitors published on the selected public status page are available. AGMS
+retrieves the public JSON endpoints without Kuma credentials. The server must
+reach the page using a public IP and valid TLS certificate. Private/loopback
+addresses, redirects, embedded credentials and unsupported ports are rejected.
+Ports 80, 443, 8080 and 8443 are supported. Reverse-proxy subpaths are supported
+when the URL ends in `/status/<slug>`; custom-domain root URLs need that explicit
+path too. Existing AGMS service reachability remains available below Kuma.

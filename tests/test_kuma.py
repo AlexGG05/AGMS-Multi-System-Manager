@@ -1,0 +1,38 @@
+import unittest
+from unittest.mock import patch
+from fastapi import HTTPException
+import test_admin_tickets as foundation
+from app import main, kuma
+
+class KumaTest(unittest.TestCase):
+    setUp = foundation.AdminTicketsTest.setUp
+    tearDown = foundation.AdminTicketsTest.tearDown
+    login = foundation.AdminTicketsTest.login
+
+    def test_personal_config_validation_and_csrf(self):
+        self.assertEqual(self.client.get('/api/kuma').status_code,401)
+        self.login('user@example.test')
+        headers={'Origin': main.ORIGIN,'X-CSRF-Token':'test-csrf'}
+        entry={'title':'Hosts','category':'vHosts','url':'https://status.example/status/main','monitors':['12']}
+        self.assertEqual(self.client.put('/api/kuma',json={'entries':[entry]}).status_code,403)
+        self.assertEqual(self.client.put('/api/kuma',json={'entries':[entry]},headers=headers).status_code,200)
+        self.assertEqual(self.client.get('/api/kuma').json()['entries'],[entry])
+        self.login('premium@example.test')
+        self.assertEqual(self.client.get('/api/kuma').json()['entries'],[])
+        for url in ['javascript:alert(1)','https://user:secret@example/status/main','https://example/status/main?x=1','http://[broken','https://example:22/status/main']:
+            self.assertEqual(self.client.put('/api/kuma',json={'entries':[{**entry,'url':url}]},headers=headers).status_code,400)
+
+    def test_kuma_groups_latest_heartbeat_and_unknown(self):
+        with patch('app.kuma.public_json',side_effect=[{'publicGroupList':[{'name':'Hosts','monitorList':[{'id':12,'name':'Host A'},{'id':13,'name':'Host B'}]}]},{'heartbeatList':{'12':[{'status':0},{'status':1,'time':'now'}]},'uptimeList':{'12_24':0.99}}]):
+            data=kuma.read_page('https://status.example/status/main')
+        self.assertEqual(data['monitors'][0],{'id':'12','name':'Host A','group':'Hosts','status':'online','time':'now','uptime':0.99})
+        self.assertEqual(data['monitors'][1]['status'],'unknown')
+
+    def test_private_dns_blocked_before_socket_and_redirect_rejected(self):
+        url,_,_=kuma.source('https://status.example/status/main')
+        with patch('app.kuma.socket.getaddrinfo',return_value=[(2,1,6,'',('127.0.0.1',443))]),patch('app.kuma.socket.socket') as sock:
+            with self.assertRaises(ValueError):kuma.public_json(url,'/api/status-page/main')
+            sock.assert_not_called()
+        with patch('app.kuma.public_json',side_effect=ValueError('redirect')):
+            with self.assertRaises(HTTPException) as error:kuma.read_page('https://status.example/status/main')
+            self.assertEqual(error.exception.status_code,502)
