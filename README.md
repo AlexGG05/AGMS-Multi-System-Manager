@@ -180,10 +180,10 @@ The Kuma administration dashboard is separate from public status-page entries:
 those still require a published `/status/<slug>` URL.
 
 For a parent/group monitor such as `Hosts`, edit the status entry and set
-**Category heading → Monitor from status page**. Load the monitors, then select
+**Category heading → Monitor as heading**. Load the monitors, then select
 **Header monitor**. The card heading displays that monitor's current name,
 status and 24-hour uptime; it is excluded from the child rows even when selected
 in the monitor list. The remaining selection still controls which children are
-shown. **Custom name** restores a manually named heading. Existing entries keep
+shown. **Custom category name** restores a manually named heading using one **Category name** field. Existing entries keep
 their manual names until explicitly changed. A removed/unpublished header monitor
 shows a warning while retaining the saved title and child list.

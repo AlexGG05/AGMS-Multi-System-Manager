@@ -108,6 +108,7 @@ Object.assign(translations,{"Titel": "Title", "Gib eine öffentliche Kuma-Status
 Object.assign(translations,{"Proxy benötigt eine HTTPS-Adresse ohne Zugangsdaten oder Fragment":"Proxy requires an HTTPS URL without credentials or a fragment"});
 Object.assign(translations,{"Verfügbarkeit · 24h":"Uptime · 24h","Keine Verfügbarkeitsdaten":"No uptime data"});
 Object.assign(translations,{"Kategorieüberschrift": "Category heading", "Eigener Name": "Custom name", "Monitor von der Statusseite": "Monitor from status page", "Monitor im Kartenkopf": "Header monitor", "Monitore laden und einen Monitor für den Kartenkopf auswählen": "Load monitors and select a header monitor", "Der ausgewählte Monitor ist nicht mehr veröffentlicht": "Selected monitor is no longer published", "Ungültiger Monitor für den Kartenkopf": "Invalid header monitor"});
+Object.assign(translations,{"Kategoriename": "Category name", "Eigener Kategoriename": "Custom category name", "Monitor als Überschrift": "Monitor as heading", "Gib einen Namen für diese Karte ein.": "Enter one name for this card.", "Zeigt einen Monitor in der Überschrift statt in der Liste.": "Show a monitor in the heading instead of the list."});
 const reverse=Object.fromEntries(Object.entries(translations).map(([de,en])=>[en,de]));
 const placeholderReverse=Object.fromEntries(Object.entries(placeholders).map(([de,en])=>[en,de]));
 const readLanguage=()=>{try{return localStorage.getItem('agms-language')==='de'?'de':'en'}catch{return'en'}};
