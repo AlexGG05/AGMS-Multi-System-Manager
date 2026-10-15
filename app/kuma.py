@@ -95,7 +95,13 @@ def router(connect, identity, csrf):
             ids = entry.get('monitors', [])
             if not isinstance(ids, list) or len(ids) > 500 or any(not isinstance(i, str) or not re.fullmatch(r'[0-9]{1,12}', i) for i in ids):
                 raise HTTPException(400, 'Invalid monitor selection')
-            clean.append({k: entry[k].strip() for k in ('title', 'category', 'url')} | {'monitors': list(dict.fromkeys(ids))})
+            header = entry.get('header_monitor')
+            if header is not None and (not isinstance(header, str) or not re.fullmatch(r'[0-9]{1,12}', header)):
+                raise HTTPException(400, 'Invalid header monitor')
+            cleaned = {k: entry[k].strip() for k in ('title', 'category', 'url')} | {'monitors': list(dict.fromkeys(ids))}
+            if header is not None:
+                cleaned['header_monitor'] = header
+            clean.append(cleaned)
         with connect() as db:
             db.execute('INSERT INTO kuma_dashboards VALUES (?,?) ON CONFLICT(username) DO UPDATE SET settings=excluded.settings', (username, json.dumps(clean)))
         return {'ok': True}

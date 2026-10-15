@@ -22,6 +22,20 @@ class KumaTest(unittest.TestCase):
         for url in ['javascript:alert(1)','https://user:secret@example/status/main','https://example/status/main?x=1','http://[broken','https://example:22/status/main']:
             self.assertEqual(self.client.put('/api/kuma',json={'entries':[{**entry,'url':url}]},headers=headers).status_code,400)
 
+    def test_optional_header_monitor_persistence_and_validation(self):
+        self.login('user@example.test')
+        headers={'Origin':main.ORIGIN,'X-CSRF-Token':'test-csrf'}
+        entry={'title':'Hosts','category':'Hosts','url':'https://status.example/status/main','monitors':['12','13'],'header_monitor':'12'}
+        self.assertEqual(self.client.put('/api/kuma',json={'entries':[entry]},headers=headers).status_code,200)
+        self.assertEqual(self.client.get('/api/kuma').json()['entries'],[entry])
+        for value in [12,{},'abc','1 OR 1=1','']:
+            response=self.client.put('/api/kuma',json={'entries':[{**entry,'header_monitor':value}]},headers=headers)
+            self.assertEqual(response.status_code,400)
+        self.assertEqual(self.client.get('/api/kuma').json()['entries'],[entry])
+        custom={k:v for k,v in entry.items() if k!='header_monitor'}
+        self.assertEqual(self.client.put('/api/kuma',json={'entries':[custom]},headers=headers).status_code,200)
+        self.assertEqual(self.client.get('/api/kuma').json()['entries'],[custom])
+
     def test_kuma_groups_latest_heartbeat_and_unknown(self):
         with patch('app.kuma.public_json',side_effect=[{'publicGroupList':[{'name':'Hosts','monitorList':[{'id':12,'name':'Host A'},{'id':13,'name':'Host B'}]}]},{'heartbeatList':{'12':[{'status':0},{'status':1,'time':'now'}]},'uptimeList':{'12_24':0.99}}]):
             data=kuma.read_page('https://status.example/status/main')
