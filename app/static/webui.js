@@ -47,75 +47,10 @@ function openFrame(item){
  }catch{notify('Ungültige WebUI-Adresse')}
 }
 $('passwordManagerSetup').onclick=()=>window.agmsPasswordManagerSetup({website:$('external').href,tab:location.href,frame:$('webFrame').src});
-function edit(){if(role==='viewer'||workspaceLocked)return;editing=true;panels('editorPanel');drawEditor()}
-function drawEditor(){
- const root=$('editorItems');root.replaceChildren();
- const groups=items.filter(n=>!n.url);
- const heading=document.createElement('h3');heading.textContent=selectedGroup?'Gruppe verwalten: '+(groups.find(g=>g.id===selectedGroup)?.title||'Gruppe'):'Homepage verwalten';root.append(heading);
- const helper=document.createElement('p');helper.textContent=selectedGroup?'Hier kannst du diese Gruppe und ihre WebUIs bearbeiten.':'Wähle eine Gruppe aus oder erstelle eine neue. WebUIs werden innerhalb der jeweiligen Gruppe verwaltet.';root.append(helper);
- function action(label,callback){const b=document.createElement('button');b.type='button';b.className='web-editor-action';b.textContent=label;b.onclick=callback;return b}
- function field(label,value,onchange,type='text'){const wrap=document.createElement('label');wrap.className='web-config-field';const cap=document.createElement('span');cap.textContent=label;const input=document.createElement('input');input.type=type;input.value=value||'';input.oninput=()=>onchange(input.value);wrap.append(cap,input);return wrap}
- function rowFor(item){
-  const card=document.createElement('div');card.className='web-config-card';card.dataset.editorId=item.id;
-  const header=document.createElement('strong');header.textContent=item.url?'◈ '+item.title:'▤ '+item.title;card.append(header);
-  card.append(field('Name',item.title,v=>item.title=v));
-  card.append(field('Icon: Emoji oder HTTPS-Bildadresse',item.icon_url||item.icon||'◈',v=>{const value=v.trim();if(/^https?:\/\//i.test(value)){item.icon_url=value}else{item.icon=value;item.icon_url=''};}));
-  const help=document.createElement('small');help.textContent='Beispiel: 🖥️ oder https://example.com/logo.png (auch SVG/WebP).';help.className='web-hint';card.append(help);
-  const colorLabel=document.createElement('label');colorLabel.className='web-config-field';colorLabel.textContent='Kachelfarbe';const colorInput=document.createElement('input');colorInput.type='color';colorInput.value=/^#[0-9a-f]{6}$/i.test(item.color||'')?item.color:'#243b5a';colorInput.oninput=()=>item.color=colorInput.value;colorLabel.append(colorInput);card.append(colorLabel);
-  const favoriteLabel=document.createElement('label');favoriteLabel.className='web-config-check';const favoriteInput=document.createElement('input');favoriteInput.type='checkbox';favoriteInput.checked=!!item.favorite;favoriteInput.onchange=()=>item.favorite=favoriteInput.checked;favoriteLabel.append(favoriteInput,document.createTextNode(' Als Favorit anzeigen'));card.append(favoriteLabel);
-  if(item.url){
-   if(!['ssh','rdp'].includes(item.open_mode))card.append(field('WebUI-Adresse',item.url,v=>item.url=v,'url'));
-   const label=document.createElement('label');label.className='web-config-field';const cap=document.createElement('span');cap.textContent='Öffnungsmodus';const select=document.createElement('select');
-   [['embed','Innerhalb von AGMS (iframe)'],['external','Extern in neuem Tab'],['proxy','Über AGMS-Proxy öffnen (Freigabe durch Administrator)'],['ssh','SSH terminal'],['rdp','RDP (Guacamole)']].forEach(([v,t])=>{const o=document.createElement('option');o.value=v;o.textContent=t;select.append(o)});
-   select.value=item.open_mode||'embed';select.onchange=()=>{item.open_mode=select.value;if(['ssh','rdp'].includes(select.value))item.url=select.value+'://connection';drawEditor()};label.append(cap,select);card.append(label);
-  }
-  if(['ssh','rdp'].includes(item.open_mode))card.append(action('Configure connection',async()=>{try{if(!await save())return;await window.agmsConfigureRemote(workspace.id,item)}catch(e){notify(e.message)}}));
-  if(item.url){const label=document.createElement('label');label.className='web-config-field';label.textContent='Minimum role to open';const select=document.createElement('select');for(const value of (role==='owner'?['viewer','editor','owner']:['viewer','editor'])){const option=document.createElement('option');option.value=value;option.textContent=value;select.append(option)}select.value=item.min_role||'viewer';select.onchange=()=>item.min_role=select.value;label.append(select);card.append(label)}
-  const actions=document.createElement('div');actions.className='web-config-actions';
-  for(const [direction,label] of [[-1,'↑'],[1,'↓']])actions.append(action(label,()=>{const siblings=items.filter(n=>n.parent_id===item.parent_id);const at=siblings.findIndex(n=>n.id===item.id);const target=siblings[at+direction];if(!target)return;const from=items.indexOf(item),to=items.indexOf(target);[items[from],items[to]]=[items[to],items[from]];drawEditor()}));
-  actions.append(action('Löschen',()=>{if(!confirm('„'+item.title+'“ wirklich löschen?'+(!item.url?' Alle WebUIs dieser Gruppe werden ebenfalls entfernt.':'')))return;items=items.filter(n=>n.id!==item.id&&n.parent_id!==item.id);if(selectedGroup===item.id)selectedGroup=null;drawEditor()}));
-  if(item.url)actions.prepend(action('Duplizieren',()=>{items.push({...item,id:crypto.randomUUID(),title:item.title+' (Kopie)'});drawEditor()}));
-  card.append(actions);return card;
- }
- if(selectedGroup){
-  root.append(action('Gruppe duplizieren',()=>{const original=groups.find(g=>g.id===selectedGroup);if(!original)return;const copyId=crypto.randomUUID();items.push({...original,id:copyId,title:original.title+' (Kopie)'});for(const child of items.filter(n=>n.parent_id===original.id))items.push({...child,id:crypto.randomUUID(),parent_id:copyId});selectedGroup=copyId;drawEditor()}));
-  const group=groups.find(g=>g.id===selectedGroup);
-  if(group)root.append(rowFor(group));
-  const subtitle=document.createElement('h3');subtitle.textContent='WebUIs in dieser Gruppe';root.append(subtitle);
-  root.append(action('＋ WebUI in dieser Gruppe',()=>addItem(false)));
-  for(const item of items.filter(n=>n.url&&n.parent_id===selectedGroup))root.append(rowFor(item));
-  root.append(action('← Alle Gruppen',()=>{selectedGroup=null;drawEditor()}));
- }else{
-  root.append(action('＋ Neue Gruppe',()=>addItem(true)));
-  for(const group of groups){
-   const line=document.createElement('div');line.className='web-group-config';
-   const name=document.createElement('strong');name.textContent='▤ '+group.title;
-   const count=document.createElement('span');count.textContent=items.filter(n=>n.parent_id===group.id).length+' WebUIs';
-   line.append(name,count,action('Verwalten →',()=>{selectedGroup=group.id;drawEditor()}),action('↑',()=>{const index=items.indexOf(group);const previous=items.slice(0,index).reverse().find(n=>!n.url);if(previous){const at=items.indexOf(previous);[items[at],items[index]]=[items[index],items[at]];drawEditor()}}),action('↓',()=>{const index=items.indexOf(group);const next=items.slice(index+1).find(n=>!n.url);if(next){const at=items.indexOf(next);[items[at],items[index]]=[items[index],items[at]];drawEditor()}}));root.append(line);
-  }
-  const ungrouped=items.filter(n=>n.url&&!n.parent_id);
-  if(ungrouped.length){const h=document.createElement('h3');h.textContent='Ohne Gruppe';root.append(h);for(const item of ungrouped)root.append(rowFor(item))}
-  root.append(action('＋ WebUI ohne Gruppe',()=>addItem(false)));
- }
-}
-function addItem(group){
- if(role==='viewer'||workspaceLocked)return;
- if(!editing){editing=true;panels('editorPanel')}
- const name=prompt(group?'Name der neuen Gruppe':'Name der neuen WebUI');
- if(!name?.trim())return;
- let url=null,open_mode='embed';
- if(!group){
-  open_mode=prompt(window.agmsTranslate?.('Opening mode: embed, proxy, external, ssh or rdp')||'Opening mode: embed, proxy, external, ssh or rdp','embed');
-  if(!['embed','proxy','external','ssh','rdp'].includes(open_mode))return;
-  if(['ssh','rdp'].includes(open_mode))url=open_mode+'://connection';
-  else{url=prompt('WebUI URL (https:// or http://)');if(!url)return;try{const u=new URL(url);if(!['http:','https:'].includes(u.protocol)||!u.hostname||u.username||u.password)throw Error('URL')}catch{return notify('Invalid WebUI URL')}}
- }
-
- const id=crypto.randomUUID();
- items.push({id,title:name.trim(),url,icon:group?'▤':'◈',parent_id:group?null:selectedGroup,min_role:'viewer',open_mode});
- if(group)selectedGroup=id;
- drawEditor();
-}
+// Editing is provided in place by workspace-editor.js.
+function edit(){window.agmsBeginLayoutEdit?.()}
+function drawEditor(){}
+function addItem(group){window.agmsEditEntry?.(null,group?'group':'embed')}
 async function save(){
  if(workspaceLocked){notify('Diese Homepage ist schreibgeschützt.');return false;}
  try{
@@ -137,7 +72,7 @@ $('showHome').onclick=showHome;$('back').onclick=()=>selectedGroup?showGroup(sel
 $('reload').onclick=()=>{const f=$('webFrame');f.src=f.src};
 // Fullscreen button uses a self-contained inline handler for mobile Safari reliability.
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&$('framePanel').classList.contains('web-frame-expanded'))setFrameExpanded(false)});
-$('addGroup').onclick=()=>{selectedGroup=null;addItem(true)};$('addWebui').onclick=()=>addItem(false);
+$('addGroup').onclick=()=>addItem(true);$('addWebui').onclick=()=>addItem(false);
 $('editButton').onclick=edit;
 $('saveNavigation').onclick=save;$('cancelEdit').onclick=()=>openWorkspace(workspace.id);
 $('addWorkspace').onclick=async()=>{const name=prompt('Name der neuen Homepage');if(!name?.trim())return;try{const data=await api('/api/workspaces','POST',{name:name.trim()});await init();await openWorkspace(data.id)}catch(e){notify(e.message)}};

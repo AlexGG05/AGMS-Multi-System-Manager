@@ -92,7 +92,7 @@ def install(db):
     db.execute("INSERT OR IGNORE INTO account_security(username,verified_at,tier) SELECT username,unixepoch(),0 FROM users WHERE username=?", (os.getenv("ADMIN_USERNAME","admin"),))
     db.execute("INSERT OR IGNORE INTO account_profiles(username,email,role) SELECT username, CASE WHEN instr(username,'@')>0 THEN lower(username) ELSE NULL END, 'admin' FROM users WHERE username=?", (os.getenv("ADMIN_USERNAME","admin"),))
 
-    for name,definition in [('tile_width','INTEGER NOT NULL DEFAULT 1'),('tile_height','INTEGER NOT NULL DEFAULT 1')]:
+    for name,definition in [(name,'INTEGER NOT NULL DEFAULT 1') for name in ('tile_width','tile_height','favorite_width','favorite_height')]:
         if name not in {r[1] for r in db.execute('PRAGMA table_info(workspace_navigation)')}:db.execute('ALTER TABLE workspace_navigation ADD COLUMN '+name+' '+definition)
     if 'layout_revision' not in {r[1] for r in db.execute('PRAGMA table_info(workspaces)')}:db.execute('ALTER TABLE workspaces ADD COLUMN layout_revision INTEGER NOT NULL DEFAULT 0')
     remote_sessions.install(db)
@@ -437,10 +437,11 @@ def router(connect, require, csrf, serializer, secure, origin):
         with connect() as db:
             role=membership(db,wsid,username)
             w=db.execute("SELECT id,name,layout_revision FROM workspaces WHERE id=?",(wsid,)).fetchone()
-            nav=db.execute("SELECT id,parent_id,title,icon,url,position,min_role,open_mode,favorite,color,icon_url,tile_width,tile_height FROM workspace_navigation WHERE workspace_id=? ORDER BY position,id",(wsid,)).fetchall()
+            nav=db.execute("SELECT id,parent_id,title,icon,url,position,min_role,open_mode,favorite,color,icon_url,tile_width,tile_height,favorite_width,favorite_height FROM workspace_navigation WHERE workspace_id=? ORDER BY position,id",(wsid,)).fetchall()
             editable=workspace_editable(db,wsid)
+            is_admin=bool(db.execute("SELECT 1 FROM account_profiles WHERE username=? AND role='admin'",(username,)).fetchone())
         order={"viewer":0,"editor":1,"owner":2}
-        return {"workspace":dict(w),"role":role,"editable":editable,"navigation":[dict(n) for n in nav if order[role]>=order[n["min_role"]]]}
+        return {"workspace":dict(w),"role":role,"editable":editable,"navigation":[dict(n) for n in nav if order[role]>=order[n["min_role"]] and (is_admin or n["open_mode"]!="rdp")]}
     @api.get("/api/workspaces/{wsid}/status/{item_id}")
     async def navigation_status(request:Request,wsid:str,item_id:str):
         username=identity(request)
@@ -514,8 +515,10 @@ def router(connect, require, csrf, serializer, secure, origin):
             if ident in ids or not 1<=len(title)<=80 or len(icon)>40 or min_role not in ROLES or (parent and parent==ident): raise HTTPException(400,"Invalid item")
             width=item.get('tile_width',1);height=item.get('tile_height',1)
             if type(width)!=int or type(height)!=int or not 1<=width<=4 or not 1<=height<=4:raise HTTPException(400,'Invalid tile dimensions')
+            fw=item.get('favorite_width',1);fh=item.get('favorite_height',1)
+            if type(fw)!=int or type(fh)!=int or not 1<=fw<=4 or not 1<=fh<=4:raise HTTPException(400,'Invalid favorite dimensions')
             target_url=(open_mode+'://connection') if open_mode in ('ssh','rdp') else clean_url(item.get('url'))
-            ids.add(ident);cleaned.append((ident,wsid,parent,title,icon,target_url,i,min_role,open_mode,favorite,color,icon_url,width,height))
+            ids.add(ident);cleaned.append((ident,wsid,parent,title,icon,target_url,i,min_role,open_mode,favorite,color,icon_url,width,height,fw,fh))
         for row in cleaned:
             if row[2] and row[2] not in ids: raise HTTPException(400,"Unknown parent")
             if row[2] and next(x for x in cleaned if x[0]==row[2])[2]: raise HTTPException(400,"Nested groups are not supported")
@@ -543,24 +546,26 @@ def router(connect, require, csrf, serializer, secure, origin):
             old={r['id']:dict(r) for r in old_rows}
             member_role=membership(db,wsid,username,edit=True)
             rank={'viewer':0,'editor':1,'owner':2}
-            hidden={r['id'] for r in old_rows if rank[member_role]<rank[r['min_role']]}
+            is_admin=bool(db.execute("SELECT 1 FROM account_profiles WHERE username=? AND role='admin'",(username,)).fetchone())
+            if not is_admin and any(row[8]=='rdp' for row in cleaned):raise HTTPException(403,'RDP is currently available to administrators only')
+            hidden={r['id'] for r in old_rows if rank[member_role]<rank[r['min_role']] or (not is_admin and r['open_mode']=='rdp')}
             if hidden & ids:raise HTTPException(403,'Cannot modify tiles requiring a higher role')
             if any(r['id'] in hidden and r['parent_id'] and r['parent_id'] not in ids and r['parent_id'] not in hidden for r in old_rows):raise HTTPException(403,'A group contains protected tiles and cannot be deleted')
             if hidden:
                 # The editor only received visible rows. Preserve higher-role tiles
                 # in their old slots instead of deleting them during replacement.
-                fields=('id','workspace_id','parent_id','title','icon','url','position','min_role','open_mode','favorite','color','icon_url','tile_width','tile_height')
+                fields=('id','workspace_id','parent_id','title','icon','url','position','min_role','open_mode','favorite','color','icon_url','tile_width','tile_height','favorite_width','favorite_height')
                 pending=list(cleaned);merged=[]
                 for row in old_rows:
                     if row['id'] in hidden:merged.append(tuple(row[f] for f in fields))
                     elif pending:merged.append(pending.pop(0))
                 merged.extend(pending)
                 cleaned=[tuple(list(row[:6])+[i]+list(row[7:])) for i,row in enumerate(merged)]
-            new={r[0]:dict(zip(('id','workspace_id','parent_id','title','icon','url','position','min_role','open_mode','favorite','color','icon_url','tile_width','tile_height'),r)) for r in cleaned}
+            new={r[0]:dict(zip(('id','workspace_id','parent_id','title','icon','url','position','min_role','open_mode','favorite','color','icon_url','tile_width','tile_height','favorite_width','favorite_height'),r)) for r in cleaned}
             changes={'added':[{'id':k,'title':new[k]['title']} for k in new.keys()-old.keys()], 'removed':[{'id':k,'title':old[k]['title']} for k in old.keys()-new.keys()], 'changed':[{'id':k,'title':new[k]['title'],'fields':[f for f in new[k] if new[k][f]!=old[k].get(f)]} for k in new.keys()&old.keys() if any(new[k][f]!=old[k].get(f) for f in new[k])]}
             if any(changes.values()):operations.audit(db,wsid,username,'navigation.updated',changes)
             db.execute("DELETE FROM workspace_navigation WHERE workspace_id=?",(wsid,))
-            db.executemany("INSERT INTO workspace_navigation(id,workspace_id,parent_id,title,icon,url,position,min_role,open_mode,favorite,color,icon_url,tile_width,tile_height) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",cleaned)
+            db.executemany("INSERT INTO workspace_navigation(id,workspace_id,parent_id,title,icon,url,position,min_role,open_mode,favorite,color,icon_url,tile_width,tile_height,favorite_width,favorite_height) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",cleaned)
             db.execute('DELETE FROM remote_connections WHERE workspace_id=? AND item_id NOT IN (SELECT id FROM workspace_navigation WHERE workspace_id=?)',(wsid,wsid))
             db.execute('DELETE FROM remote_sessions WHERE workspace_id=? AND item_id NOT IN (SELECT id FROM workspace_navigation WHERE workspace_id=?)',(wsid,wsid))
             db.execute('DELETE FROM service_dependencies WHERE workspace_id=? AND (service_id NOT IN (SELECT id FROM workspace_navigation WHERE workspace_id=?) OR depends_on NOT IN (SELECT id FROM workspace_navigation WHERE workspace_id=?))',(wsid,wsid,wsid))

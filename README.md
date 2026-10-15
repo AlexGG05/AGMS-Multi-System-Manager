@@ -6,7 +6,7 @@ Lightweight, self-hosted homelab dashboard. Runs on Raspberry Pi OS 64-bit (ARM6
 - Personal and shared homepages, service groups, favorites, tile/list views and navigation import/export
 - Embedded WebUIs, external links and administrator-approved HTTPS proxy origins
 - Browser SSH (password/private key), integrated Guacamole RDP and encrypted per-homepage connections
-- Explicit homepage edit mode, persistent tile sizes/order and an optional multi-window desktop
+- Explicit homepage edit mode with tile/group pencils, one adaptive creation form, independent favorite sizes and an optional multi-window desktop
 - Multi-user accounts, team roles, email verification/recovery and optional TOTP/passkeys
 - Administrator panel, support tickets, comments, screenshots, service context and notifications
 - Global search, configurable homepage widgets and English/German interface
@@ -325,6 +325,6 @@ All AGMS pages include a static footer linking to the public `/imprint` and `/pr
 
 ### Review and validation for SSH/RDP and issue #8
 
-After validation on review branches, the combined changes are integrated directly into `main` at the project owner’s request. Production deployment remains an operator action. See [implementation notes](docs/REMOTE-DESKTOP-IMPLEMENTATION.md) for the issue analysis, migration scope, checks and remaining limitations. Optional RDP is enabled with `compose.remote.yaml`; preserve the existing data volume and `SESSION_SECRET`. The default Docker Compose services, credentials, tiers and homepage limits are retained.
+After validation on review branches, the combined changes are integrated directly into `main` at the project owner’s request. Production deployment remains an operator action. See [implementation notes](docs/REMOTE-DESKTOP-IMPLEMENTATION.md) for the issue analysis, migration scope, checks and remaining limitations. RDP is currently restricted to administrator accounts and enabled with `compose.remote.yaml`; preserve the existing data volume and `SESSION_SECRET`. The default Docker Compose services, credentials, tiers and homepage limits are retained.
 
 Python regression and live SSH tests run with `python -m unittest discover -s tests -q`. `tests/run_browser_checks.sh` runs the browser regressions and isolated desktop/SSH/Guacamole fixtures (requires Python dependencies, Playwright and Chromium). Normal browser CI uses a simulated guacd; a real guacd/FreeRDP NLA desktop with certificate pinning was also exercised during development.

@@ -35,9 +35,9 @@ The foundation and browser commits were prepared as stacked review changes. Afte
 
 ## Validation evidence
 
-The Python suite (58 tests) includes existing ticket, account, tier, proxy, Kuma, profile, notification and security tests plus new migration, conflict, destination, credential, ticket replay, rate/session limit, tier, SSH and Guacamole cases. Live SSH tests cover password, plain/encrypted private keys, terminal resize, wrong-host-key rejection and active membership revocation.
+The Python suite (60 tests) includes existing ticket, account, tier, proxy, Kuma, profile, notification and security tests plus new migration, conflict, destination, credential, ticket replay, rate/session limit, tier, SSH and Guacamole cases. Live SSH tests cover password, plain/encrypted private keys, terminal resize, wrong-host-key rejection and active membership revocation.
 
-Seven browser test groups cover the existing Kuma/profile/security/legal flows plus viewer lock, explicit edit-mode pointer drag, saved order/sizes after reload, cancel, four simultaneously mounted iframe/proxy windows without losing frame state, minimize/maximize, mobile tabs, SSH keyboard/PTY, Guacamole canvas/mouse/keyboard, German UI and secret-field masking. The normal repeatable CI fixture simulates guacd; a separate real Docker guacd 1.6.0 → FreeRDP 3 shadow desktop was exercised with NLA and a certificate pin, including real rendered image updates and rejection of a wrong pin.
+Eight browser test groups cover the existing Kuma/profile/security/legal flows plus viewer lock, explicit edit-mode pointer drag, saved order/sizes after reload, cancel, four simultaneously mounted iframe/proxy windows without losing frame state, minimize/maximize, mobile tabs, SSH keyboard/PTY, Guacamole canvas/mouse/keyboard, German UI and secret-field masking. The normal repeatable CI fixture simulates guacd; a separate real Docker guacd 1.6.0 → FreeRDP 3 shadow desktop was exercised with NLA and a certificate pin, including real rendered image updates and rejection of a wrong pin.
 
 Docker build uses the repository Dockerfile and the existing non-root/read-only runtime. The optional `build_ca` BuildKit secret supplies this environment's trusted build proxy CA without storing it in the image. The guacd image has amd64 and arm64 manifests; the application build is validated on the available amd64 host. ARM64 execution and real Windows-specific enterprise policies still require deployment-environment validation.
 
@@ -57,3 +57,9 @@ Docker build uses the repository Dockerfile and the existing non-root/read-only 
 * Browser/editor/desktop: `feature/remote-sessions-and-workspace-desktop`, based on the foundation branch. [Open stacked comparison](https://github.com/AlexGG05/AGMS-Multi-System-Manager/compare/feature/remote-sessions-core...feature/remote-sessions-and-workspace-desktop?expand=1), description: [workspace-desktop-pr.md](reviews/workspace-desktop-pr.md).
 
 The combined result is integrated directly into `main` following the project owner’s subsequent instruction. The original review branches remain available for comparison. No production deployment is performed from this environment. GitHub-hosted PR checks have been added; local verification is documented above.
+
+## Follow-up: in-place editing and administrator-only RDP
+
+RDP is temporarily restricted to administrators in navigation writes, credential APIs, ticket creation and live tunnel access (including role revocation). Non-admin navigation responses omit RDP entries and visible-only saves preserve them. Two additional regression tests cover the restriction and favorite dimensions.
+
+The central editor and sequential prompt-based entry creation are replaced by tile/group pencils and one adaptive dialog, available only in Edit mode. Favorites have independent stored dimensions. The new browser test covers group and tile edits, type switching, a single-form SSH credential save, draft secret isolation, favorite size persistence, star/status containment and mobile dialogs. The existing desktop and remote browser checks remain in the suite.

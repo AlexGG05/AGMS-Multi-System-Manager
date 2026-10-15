@@ -32,6 +32,8 @@ class RemoteSessionsTest(unittest.TestCase):
             hashes=[tuple(r) for r in db.execute('SELECT * FROM users ORDER BY username')]
             db.execute('ALTER TABLE workspace_navigation DROP COLUMN tile_width')
             db.execute('ALTER TABLE workspace_navigation DROP COLUMN tile_height')
+            db.execute('ALTER TABLE workspace_navigation DROP COLUMN favorite_width')
+            db.execute('ALTER TABLE workspace_navigation DROP COLUMN favorite_height')
             db.execute('ALTER TABLE workspaces DROP COLUMN layout_revision')
         main.init();main.init()
         with main.connect() as db:
@@ -39,6 +41,44 @@ class RemoteSessionsTest(unittest.TestCase):
             self.assertEqual(hashes,[tuple(r) for r in db.execute('SELECT * FROM users ORDER BY username')])
             self.assertEqual(set(tuple(r) for r in db.execute('SELECT tile_width,tile_height FROM workspace_navigation')),{(1,1)})
         self.assertEqual(self.client.get('/api/workspaces/shared').json()['workspace']['layout_revision'],0)
+
+    def test_rdp_admin_only_and_hidden_tiles_survive_editor_save(self):
+        self.seed('rdp')
+        with patch.dict('os.environ',{'GUACD_HOST':'guacd'}):
+            ticket=self.client.post(self.path+'/sessions',headers=self.headers()).json()['ticket']
+        self.login('user@example.test')
+        with main.connect() as db:db.execute("UPDATE workspace_members SET role='editor' WHERE workspace_id='shared' AND username='user@example.test'")
+        for method in ['get','put','delete','post']:
+            path=self.path+'/sessions' if method=='post' else self.path
+            kwargs={'json':self.body} if method=='put' else {}
+            response=getattr(self.client,method)(path,headers=self.headers(),**kwargs)
+            self.assertEqual(response.status_code,403,response.text)
+        page=self.client.get('/api/workspaces/shared').json()
+        self.assertNotIn('public',[x['id'] for x in page['navigation']])
+        self.assertEqual(self.client.put('/api/workspaces/shared/navigation',json={'items':page['navigation'],'revision':page['workspace']['layout_revision']},headers=self.headers()).status_code,200)
+        forged=page['navigation']+[{'id':'forged','title':'RDP','open_mode':'rdp'}]
+        self.assertEqual(self.client.put('/api/workspaces/shared/navigation',json={'items':forged},headers=self.headers()).status_code,403)
+        self.login(main.ADMIN)
+        self.assertIn('public',[x['id'] for x in self.client.get('/api/workspaces/shared').json()['navigation']])
+        # A ticket created before an administrator was demoted must also be rejected.
+        with main.connect() as db:db.execute("UPDATE account_profiles SET role='user' WHERE username=?",(main.ADMIN,))
+        with self.assertRaises(WebSocketDisconnect):
+            with self.client.websocket_connect('/api/remote/tunnel?ticket='+ticket,headers={'Origin':main.ORIGIN}):pass
+        with main.connect() as db:self.assertEqual(db.execute("SELECT open_mode FROM workspace_navigation WHERE id='public'").fetchone()[0],'rdp')
+
+    def test_favorite_dimensions_are_separate_and_validated(self):
+        self.seed()
+        page=self.client.get('/api/workspaces/shared').json()
+        item=next(x for x in page['navigation'] if x['id']=='public')
+        item.update(favorite=True,favorite_width=3,favorite_height=2,tile_width=1,tile_height=1)
+        path='/api/workspaces/shared/navigation'
+        response=self.client.put(path,json={'items':page['navigation']},headers=self.headers());self.assertEqual(response.status_code,200,response.text)
+        main.init();main.init()
+        saved=next(x for x in self.client.get('/api/workspaces/shared').json()['navigation'] if x['id']=='public')
+        self.assertEqual((saved['tile_width'],saved['tile_height'],saved['favorite_width'],saved['favorite_height']),(1,1,3,2))
+        for value in [0,5,True,'2']:
+            item['favorite_width']=value
+            self.assertEqual(self.client.put(path,json={'items':page['navigation']},headers=self.headers()).status_code,400)
 
     def test_remote_credentials_encrypted_and_shared_by_permission_only(self):
         self.seed()

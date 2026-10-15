@@ -1,6 +1,6 @@
 # Browser SSH and RDP
 
-SSH is served by AGMS using AsyncSSH and the vendored xterm.js client. RDP uses Apache Guacamole's official JavaScript client and the bundled `guacd` service. No Guacamole web application, additional login or Guacamole database is required. Both use the existing AGMS account, homepage membership and tile minimum role. A homepage owner/editor explicitly shares use of its saved credentials with members allowed to open that tile; members cannot retrieve the secret.
+SSH is served by AGMS using AsyncSSH and the vendored xterm.js client. RDP uses Apache Guacamole's official JavaScript client and the bundled `guacd` service. No Guacamole web application, additional login or Guacamole database is required. Both use the existing AGMS account, homepage membership and tile minimum role. RDP is currently available only to administrator accounts, including creation, configuration, session tickets and live tunnel access. SSH retains the existing homepage permissions. A homepage owner/editor explicitly shares use of its saved credentials with members allowed to open that tile; members cannot retrieve the secret.
 
 ## Deploy without changing existing data
 
@@ -18,13 +18,13 @@ The reverse proxy must support WebSocket upgrades on `/api/remote/tunnel` and pr
 
 ## Configure a tile
 
-1. Select the homepage and **Edit**. Add a connection or open its existing connection editor.
+1. Select the homepage and **Edit**. Use **Add WebUI** at the top or the pencil directly on the existing tile.
 2. Select **SSH terminal** or **RDP (Guacamole)** as opening mode. Existing iFrame, external-tab and approved AGMS-Proxy modes remain available.
-3. Choose **Configure connection**. The tile/mode is saved first; then enter host, port and account. Use a service account with the minimum required remote permissions.
+3. Enter host, port, account, credentials and fingerprint in the same form. Fields change immediately when the connection type changes. Use a service account with the minimum required remote permissions.
 4. An administrator approves the exact protocol/host/port in **Admin Panel → Remote destinations**, or with **Approve destination** in the connection dialog. LAN addresses are supported. Approval resolves and pins current IPs; revoke and reapprove after an IP change. Loopback, link-local, metadata, multicast, unspecified and reserved destinations cannot be approved.
-5. Save credentials, leave editing and open the tile. Remote connections open inside AGMS's window manager. Opening an SSH/RDP tile again creates a separate session, subject to limits.
+5. Choose **Apply** to stage the entry, then **Done** to save the homepage and encrypted credentials. If credential validation fails, the layout may already be saved; correct the error in the entry and retry Done. Leave editing and open the tile. Remote connections open inside AGMS's window manager. Opening an SSH/RDP tile again creates a separate session, subject to limits.
 
-Passwords, private keys and passphrases are stored encrypted and never returned to the browser. Host, port, username and public key/certificate fingerprints are connection metadata visible only to members allowed to use the tile. Leaving all secret fields empty preserves credentials only for the unchanged protocol, host, port and username. Changing the target/account requires credentials again. **Remove saved credentials** erases the connection configuration and ends its sessions. Export/import includes tile metadata, never SSH/RDP credentials; imported or duplicated remote tiles require configuration again.
+Passwords, private keys and passphrases are stored encrypted and never returned to the browser. Host, port, username and public key/certificate fingerprints are connection metadata visible only to members allowed to use the tile. Leaving all secret fields empty preserves credentials only for the unchanged protocol, host, port and username. Changing the target/account requires credentials again. **Remove saved credentials** stages deletion until Apply and Done, then erases the stored connection and ends its sessions. Export/import includes tile metadata, never SSH/RDP credentials; imported or duplicated remote tiles require configuration again.
 
 ### SSH host key verification
 

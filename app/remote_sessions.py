@@ -94,6 +94,7 @@ def access(db,username,wsid,itemid,edit=False):
     item=db.execute('SELECT * FROM workspace_navigation WHERE workspace_id=? AND id=?',(wsid,itemid)).fetchone()
     if not user or (username!=os.getenv('ADMIN_USERNAME','admin') and not user['verified_at']) or not member or not item or ORDER.get(member['role'],-1)<ORDER.get(item['min_role'],99):
         raise HTTPException(404,'Remote connection not found')
+    if item['open_mode']=='rdp' and user['role']!='admin':raise HTTPException(403,'RDP is currently available to administrators only')
     if edit and member['role'] not in ('owner','editor'):raise HTTPException(403,'Editor permission required')
     return item
 

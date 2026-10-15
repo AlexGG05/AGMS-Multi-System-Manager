@@ -52,7 +52,7 @@ function decorate(){
  favorites.replaceChildren();
  if(!selected&&!query){
   const fav=items.filter(n=>n.favorite&&n.url);
-  if(fav.length){favorites.append(make('h2','★ Favoriten'));const grid=make('div',undefined,'web-tiles');grid.classList.toggle('agms-list',view.value==='list');grid.append(...fav.map(tile));favorites.append(grid)}
+  if(fav.length){favorites.append(make('h2','★ Favoriten'));const grid=make('div',undefined,'web-tiles');grid.classList.toggle('agms-list',view.value==='list');grid.append(...fav.map(item=>tile(item,'favorites')));favorites.append(grid)}
  }
 }
 window.agmsRefreshHomeStatus=()=>{statusCache.clear();decorate()};
@@ -88,7 +88,7 @@ file.addEventListener('change',async()=>{
    if(url&&!['ssh','rdp'].includes(n.open_mode)){const u=new URL(url);if(!['http:','https:'].includes(u.protocol)||!u.hostname||u.username||u.password)throw Error('Ungültige URL')}
    if(n.parent_id&&!map.has(n.parent_id))throw Error('Unbekannte Gruppe');
    const color=/^#[0-9a-f]{6}$/i.test(n.color||'')?n.color:'';
-   return {id:map.get(n.id),parent_id:n.parent_id?map.get(n.parent_id):null,title:n.title.trim(),icon:String(n.icon||'◈').slice(0,40),url,min_role:['viewer','editor','owner'].includes(n.min_role)?n.min_role:'viewer',open_mode:['external','proxy','ssh','rdp'].includes(n.open_mode)?n.open_mode:'embed',tile_width:n.tile_width||1,tile_height:n.tile_height||1,favorite:!!n.favorite,color,icon_url:typeof n.icon_url==='string'&&/^https:\/\/[^\s]+$/i.test(n.icon_url)?n.icon_url:''};
+   return {id:map.get(n.id),parent_id:n.parent_id?map.get(n.parent_id):null,title:n.title.trim(),icon:String(n.icon||'◈').slice(0,40),url,min_role:['viewer','editor','owner'].includes(n.min_role)?n.min_role:'viewer',open_mode:['external','proxy','ssh','rdp'].includes(n.open_mode)?n.open_mode:'embed',tile_width:n.tile_width||1,tile_height:n.tile_height||1,favorite_width:n.favorite_width||1,favorite_height:n.favorite_height||1,favorite:!!n.favorite,color,icon_url:typeof n.icon_url==='string'&&/^https:\/\/[^\s]+$/i.test(n.icon_url)?n.icon_url:''};
   });
   if(!confirm(imported.length+' Einträge importieren? Bestehende Einträge bleiben erhalten.'))return;
   if(items.length+imported.length>150)throw Error('Maximal 150 Einträge je Homepage');
