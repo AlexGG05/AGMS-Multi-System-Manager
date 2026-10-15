@@ -203,3 +203,10 @@ left of their heading. Drag onto another card to insert the entire page at that
 position, including its monitor list and header-monitor configuration. This
 works with mouse and touch; the destination is highlighted and the order is
 saved on release. The arrow buttons remain available for keyboard use.
+
+Kuma cards use a responsive masonry layout: each subsequent entry is placed in
+the shortest available column, directly below the preceding card with a 16px
+gap (12px on small screens). Cards no longer wait for the tallest card in a row.
+The layout updates when card content, translations or available width change.
+Saved entry order and drag/move controls remain in effect; narrow screens use a
+single column.
