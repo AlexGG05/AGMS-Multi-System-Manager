@@ -46,7 +46,7 @@ openWorkspace=async function(id){
 };
 save=finish;$('saveNavigation').onclick=finish;$('cancelEdit').onclick=discard;
 addItem=group=>editEntry(null,group?'group':'embed');window.agmsEditEntry=editEntry;
-function move(item,direction){if(!allowed()||!window.agmsLayoutEditing)return;const siblings=items.filter(x=>x.parent_id===item.parent_id);const target=siblings[siblings.indexOf(item)+direction];if(!target)return;const i=items.indexOf(item),j=items.indexOf(target);[items[i],items[j]]=[items[j],items[i]];dirty=true;redraw()}
+function move(item,direction){if(!allowed()||!window.agmsLayoutEditing)return;const siblings=items.filter(x=>item.url?x.parent_id===item.parent_id:!x.url);const target=siblings[siblings.indexOf(item)+direction];if(!target)return;const i=items.indexOf(item),j=items.indexOf(target);[items[i],items[j]]=[items[j],items[i]];dirty=true;redraw()}
 function field(form,label,name,value='',type='text'){
  const wrap=make('label',label,'entry-field'),input=make(type==='textarea'?'textarea':type==='select'?'select':'input');
  if(!['textarea','select'].includes(type))input.type=type;
@@ -174,7 +174,40 @@ function drag(item,shell,handle,resizing,placement){
 function dimensions(){for(const root of document.querySelectorAll('.web-tiles')){const columns=Math.max(1,Math.floor((root.clientWidth+15)/205));for(const shell of root.querySelectorAll(':scope>.layout-tile-shell'))shell.style.gridColumn='span '+Math.min(columns,Number(shell.dataset.width)||1)}}
 const originalShowHome=showHome,originalShowGroup=showGroup;
 showHome=function(){originalShowHome();controls()};showGroup=function(id){originalShowGroup(id);controls()};$('showHome').onclick=()=>showHome();
-const originalRenderNav=renderNav;renderNav=function(){originalRenderNav();if(window.agmsLayoutEditing&&allowed()){const groups=items.filter(n=>!n.url);Array.from($('groupNav').children).forEach((node,index)=>{const row=make('div',undefined,'layout-group-row');node.replaceWith(row);row.append(node,button('✎','Edit group',()=>editEntry(groups[index])));})}};
+// Group order is editable directly in the sidebar, including inside a group.
+function dragGroup(item,row,handle){
+ handle.addEventListener('keydown',event=>{if(['ArrowUp','ArrowDown'].includes(event.key)){event.preventDefault();move(item,event.key==='ArrowUp'?-1:1);$('groupNav').querySelector('[data-group-id="'+CSS.escape(item.id)+'"] .layout-drag-handle')?.focus()}});
+ handle.addEventListener('pointerdown',event=>{
+  if(!allowed()||!window.agmsLayoutEditing||event.button!==0)return;
+  event.preventDefault();handle.setPointerCapture(event.pointerId);
+  const start={x:event.clientX,y:event.clientY};let moved=false,target=null;
+  function motion(e){
+   if(Math.abs(e.clientX-start.x)+Math.abs(e.clientY-start.y)>8)moved=true;if(!moved)return;
+   row.classList.add('layout-dragging');target?.classList.remove('layout-drop-target');
+   const hit=document.elementFromPoint(e.clientX,e.clientY)?.closest('[data-group-id]');target=hit&&hit!==row?hit:null;target?.classList.add('layout-drop-target');
+   if(e.clientY>innerHeight-60)scrollBy(0,14);else if(e.clientY<60)scrollBy(0,-14);
+  }
+  function end(e){
+   handle.removeEventListener('pointermove',motion);handle.removeEventListener('pointerup',end);handle.removeEventListener('pointercancel',end);
+   row.classList.remove('layout-dragging');target?.classList.remove('layout-drop-target');
+   if(e.type==='pointercancel'||!moved||!target)return;
+   const other=items.find(x=>x.id===target.dataset.groupId&&!x.url);if(!other)return;
+   const from=items.indexOf(item),to=items.indexOf(other);items.splice(from,1);items.splice(to,0,item);dirty=true;redraw();
+  }
+  handle.addEventListener('pointermove',motion);handle.addEventListener('pointerup',end);handle.addEventListener('pointercancel',end);
+ });
+}
+const originalRenderNav=renderNav;renderNav=function(){
+ originalRenderNav();if(!window.agmsLayoutEditing||!allowed())return;
+ const groups=items.filter(n=>!n.url);
+ Array.from($('groupNav').children).forEach((node,index)=>{
+  const group=groups[index],row=make('div',undefined,'layout-group-row');row.dataset.groupId=group.id;
+  const grip=button('⠿','Move group',()=>{});grip.classList.add('layout-drag-handle');
+  const up=button('↑','Move group up',()=>move(group,-1)),down=button('↓','Move group down',()=>move(group,1));up.disabled=index===0;down.disabled=index===groups.length-1;
+  const actions=make('div',undefined,'layout-group-controls');actions.append(up,down,button('✎','Edit group',()=>editEntry(group)));
+  node.replaceWith(row);row.append(grip,node,actions);dragGroup(group,row,grip);
+ });
+};
 const observer=new MutationObserver(dimensions);observer.observe($('tiles'),{childList:true});observer.observe($('agmsFavorites'),{childList:true,subtree:true});window.addEventListener('resize',dimensions);
 window.addEventListener('beforeunload',e=>{if(window.agmsLayoutEditing&&dirty){e.preventDefault();e.returnValue=''}});controls();if(workspace)redraw();
 })();

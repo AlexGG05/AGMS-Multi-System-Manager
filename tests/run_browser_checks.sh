@@ -30,7 +30,7 @@ for port in [8082,8083]:
 PY
 # Fail if a fixture crashed (e.g. an unrelated service already used the port).
 kill -0 "$ops_pid" "$remote_pid"
-for script in browser_kuma_history browser_operations browser_refresh browser_widget_connections browser_desktop browser_inline_edit browser_remote browser_remote_controls browser_legal; do
+for script in browser_kuma_history browser_operations browser_refresh browser_widget_connections browser_desktop browser_inline_edit browser_group_order browser_remote browser_remote_controls browser_legal; do
   node "tests/$script.cjs"
 done
 printf 'Browser fixture logs: %s\n' "$artifacts"

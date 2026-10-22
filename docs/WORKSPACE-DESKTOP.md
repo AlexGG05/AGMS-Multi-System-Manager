@@ -8,6 +8,7 @@ The normal homepage still opens a single iFrame or AGMS-Proxy view, preserving `
 
 Each homepage has its own **Edit / Done** control, visible only to an owner/editor whose homepage is editable under the existing tier rules. Normal mode has no drag/resize handles. Add/import controls and layout gestures are unavailable outside editing. In edit mode:
 
+* Reorder groups directly in the left sidebar using the grip, up/down buttons, or Arrow Up/Down while the grip has focus. This also works while viewing a group. Group arrows move between groups even when root services are interleaved. Done saves the shared order for the sidebar and overview; Cancel discards the draft. Child services keep their group assignments.
 * Drag a tile/group by its handle onto another tile in the same group. The highlighted target indicates the drop location. Pointer events support mouse and touch.
 * Use the up/down controls as the keyboard/touch alternative. All controls are real buttons with accessible labels.
 * Drag the corner to resize or use **Size** to choose width/height (1–4 units). Narrow screens clamp the visible width without discarding the saved size.

@@ -11,3 +11,7 @@
 @media(max-width:600px){.entry-grid{grid-template-columns:1fr}.entry-dialog{padding:20px}.entry-field:has(textarea){grid-column:auto}.layout-tile-controls .layout-control{padding:6px 5px}.agms-list .web-tile{flex-wrap:wrap}.agms-list .web-tile small{display:none}}
 
 @media(max-width:600px){.layout-tile-controls>.layout-control:nth-child(2),.layout-tile-controls>.layout-control:nth-child(3){display:none}}
+
+/* Sidebar groups can be reordered without returning to the overview. */
+.layout-group-controls{display:flex;flex:none;gap:3px}.layout-group-row>.layout-drag-handle,.layout-group-controls>.layout-control{padding:6px;min-width:26px}.layout-group-row>.web-nav{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.layout-group-row{border-radius:8px;margin:4px 0}.layout-group-controls .layout-control:disabled{opacity:.35;cursor:default}
+@media(max-width:700px){.layout-group-row>.layout-drag-handle,.layout-group-controls>.layout-control{min-width:44px;min-height:44px}.layout-group-controls{gap:4px}}
