@@ -126,6 +126,7 @@ Object.assign(translations,{"Bearbeitungsmodus: Stift an einer Kachel oder Grupp
 Object.assign(translations,{"Gruppe bearbeiten":"Edit group","Die Zugangsdaten werden nach Übernehmen und Speichern des Layouts entfernt.":"Credentials will be removed when you apply and save the layout."});
 Object.assign(translations,{"Sondertasten":"Special keys","Remote-Tastatureingabe":"Remote keyboard input","Modifier für die nächste Taste":"Modifiers for next key","Modifier gelten für die nächste Taste.":"Modifiers apply to the next key."});
 Object.assign(translations,{"Gruppe verschieben":"Move group","Gruppe nach oben":"Move group up","Gruppe nach unten":"Move group down"});
+Object.assign(translations,{"Virtualisierung":"Virtualization","Containerübersicht":"Container overview","Download-Warteschlange":"Download queue","Laufend / Gesamt":"Running / total","Verbleibend":"Remaining","Leerlauf":"Idle","Wird heruntergeladen":"Downloading","Angehalten":"Paused"});
 const reverse=Object.fromEntries(Object.entries(translations).map(([de,en])=>[en,de]));
 const placeholderReverse=Object.fromEntries(Object.entries(placeholders).map(([de,en])=>[en,de]));
 const readLanguage=()=>{try{return localStorage.getItem('agms-language')==='de'?'de':'en'}catch{return'en'}};
